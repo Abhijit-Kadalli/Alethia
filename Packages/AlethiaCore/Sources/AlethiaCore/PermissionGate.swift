@@ -8,8 +8,7 @@ public enum PermissionStatus: String, Sendable {
     case notDetermined
 }
 
-@MainActor
-public final class PermissionGate {
+public final class PermissionGate: @unchecked Sendable {
     public init() {}
 
     public func microphoneStatus() -> PermissionStatus {
