@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Combine
 import Foundation
 import AlethiaASR
 import AlethiaCore
