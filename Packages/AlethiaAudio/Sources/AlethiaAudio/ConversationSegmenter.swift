@@ -61,7 +61,9 @@ public final class ConversationSegmenter: @unchecked Sendable {
             silenceMs = 0
         } else {
             silenceMs += frameMs
-            if silenceMs >= 4500 {
+            // Conversation hangover is longer than VAD close so short pauses stay in-session.
+            let closeMs = max(config.closeSilenceMs * 9, 4500)
+            if silenceMs >= closeMs {
                 return closeActive()
             }
         }

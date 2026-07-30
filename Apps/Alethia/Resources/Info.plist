@@ -16,6 +16,8 @@
 	<string>Alethia listens on-device to capture conversations and dictation. Audio never leaves your Mac.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Alethia uses Accessibility to type dictated text into other apps.</string>
+	<key>NSScreenCaptureDescription</key>
+	<string>Alethia can capture system audio from meetings on-device without joining a bot. No screen content is uploaded.</string>
 	<key>LSUIElement</key>
 	<true/>
 </dict>

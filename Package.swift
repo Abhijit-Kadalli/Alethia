@@ -23,22 +23,48 @@ let package = Package(
         .target(
             name: "AlethiaKnowledge",
             dependencies: ["AlethiaCore"],
-            path: "Packages/AlethiaKnowledge/Sources/AlethiaKnowledge"
+            path: "Packages/AlethiaKnowledge/Sources/AlethiaKnowledge",
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
+        ),
+        .testTarget(
+            name: "AlethiaKnowledgeTests",
+            dependencies: ["AlethiaKnowledge", "AlethiaCore"],
+            path: "Packages/AlethiaKnowledge/Tests/AlethiaKnowledgeTests"
         ),
         .target(
             name: "AlethiaAudio",
             dependencies: ["AlethiaCore"],
             path: "Packages/AlethiaAudio/Sources/AlethiaAudio"
         ),
+        .testTarget(
+            name: "AlethiaAudioTests",
+            dependencies: ["AlethiaAudio", "AlethiaCore"],
+            path: "Packages/AlethiaAudio/Tests/AlethiaAudioTests"
+        ),
         .target(
             name: "AlethiaASR",
             dependencies: ["AlethiaCore"],
             path: "Packages/AlethiaASR/Sources/AlethiaASR"
         ),
+        .testTarget(
+            name: "AlethiaASRTests",
+            dependencies: ["AlethiaASR", "AlethiaCore"],
+            path: "Packages/AlethiaASR/Tests/AlethiaASRTests",
+            resources: [
+                .copy("Fixtures")
+            ]
+        ),
         .target(
             name: "AlethiaDiarization",
             dependencies: ["AlethiaCore", "AlethiaKnowledge"],
             path: "Packages/AlethiaDiarization/Sources/AlethiaDiarization"
+        ),
+        .testTarget(
+            name: "AlethiaDiarizationTests",
+            dependencies: ["AlethiaDiarization", "AlethiaKnowledge", "AlethiaCore"],
+            path: "Packages/AlethiaDiarization/Tests/AlethiaDiarizationTests"
         ),
         .target(
             name: "AlethiaDictation",

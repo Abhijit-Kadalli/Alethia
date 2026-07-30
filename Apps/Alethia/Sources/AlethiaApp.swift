@@ -24,6 +24,7 @@ struct AlethiaApp: App {
                 .environmentObject(appModel)
                 .frame(minWidth: 760, minHeight: 520)
         }
+        .defaultSize(width: 900, height: 600)
     }
 }
 
@@ -35,6 +36,7 @@ final class AppModel: ObservableObject {
     @Published var searchHits: [KnowledgeHit] = []
     @Published var statusMessage: String = "Ready"
     @Published var isDictating = false
+    @Published var includeSystemAudio = true
 
     let store: KnowledgeStore
     let ambient: AmbientPipeline
@@ -43,6 +45,8 @@ final class AppModel: ObservableObject {
     let gallery: SpeakerGallery
     let diarizer: DiarizationService
     let permissions = PermissionGate()
+    let hotkey = HotkeyMonitor()
+    let overlay = DictationOverlayController()
 
     var menuBarSymbol: String {
         if isDictating { return "mic.fill" }
@@ -60,17 +64,35 @@ final class AppModel: ObservableObject {
             self.asr = ASRService()
             self.dictation = DictationController(asr: asr, store: store, permissions: permissions)
             self.gallery = try SpeakerGallery(store: store)
-            self.diarizer = DiarizationService(gallery: gallery)
-            self.ambient = AmbientPipeline()
+            self.diarizer = DiarizationService(gallery: gallery, embedder: ECAPAGGMLEmbedder())
+            self.ambient = AmbientPipeline(includeSystemAudio: true)
             ambient.onConversationClosed = { [weak self] segment in
                 Task { @MainActor in
                     await self?.finalize(segment: segment)
                 }
             }
+            ambient.onPCM = { [weak self] samples in
+                guard let self else { return }
+                if self.isDictating {
+                    self.dictation.appendPCM(samples)
+                    let rms = sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(max(samples.count, 1)))
+                    self.overlay.updateLevel(rms)
+                }
+            }
+            wireHotkey()
             reload()
+            statusMessage = WhisperCPPConfiguration.defaultLocal() == nil
+                ? "Ready (stub ASR — run Scripts/setup-whisper-darwin.sh for whisper.cpp)"
+                : "Ready (whisper.cpp)"
         } catch {
             fatalError("Failed to start Alethia: \(error)")
         }
+    }
+
+    private func wireHotkey() {
+        hotkey.onBegin = { [weak self] in self?.beginDictation() }
+        hotkey.onEnd = { [weak self] in self?.endDictation() }
+        hotkey.start()
     }
 
     func reload() {
@@ -85,7 +107,9 @@ final class AppModel: ObservableObject {
                     try await permissions.requireMicrophone()
                     try ambient.start()
                     ambientState = ambient.state
-                    statusMessage = "Ambient listening"
+                    statusMessage = includeSystemAudio
+                        ? "Ambient listening (mic + system audio)"
+                        : "Ambient listening (mic)"
                 } else {
                     ambient.stop()
                     ambientState = .stopped
@@ -103,7 +127,13 @@ final class AppModel: ObservableObject {
                 try await permissions.requireMicrophone()
                 try dictation.begin()
                 isDictating = true
-                statusMessage = "Dictating…"
+                overlay.show()
+                // Ensure capture is running so dictation gets PCM even if ambient was off.
+                if ambientState == .stopped || ambientState == .paused {
+                    try ambient.start()
+                    ambientState = ambient.state
+                }
+                statusMessage = "Dictating… (release hotkey to type)"
             } catch {
                 statusMessage = error.localizedDescription
             }
@@ -115,16 +145,22 @@ final class AppModel: ObservableObject {
             do {
                 _ = try await dictation.end(targetBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
                 isDictating = false
-                statusMessage = "Dictation saved"
+                overlay.hide()
+                statusMessage = "Dictation saved to knowledge"
                 reload()
             } catch {
                 isDictating = false
+                overlay.hide()
                 statusMessage = error.localizedDescription
             }
         }
     }
 
     func search(_ query: String) {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            searchHits = []
+            return
+        }
         searchHits = (try? store.search(query: query)) ?? []
     }
 

@@ -1,6 +1,10 @@
 import Foundation
 import AlethiaCore
 
+public protocol SpeechRecognizing: Sendable {
+    func transcribe(pcm: [Float], sampleRate: Double) async throws -> [TranscriptSegment]
+}
+
 public struct TranscriptSegment: Sendable, Hashable {
     public var startMs: Int
     public var endMs: Int
@@ -13,11 +17,7 @@ public struct TranscriptSegment: Sendable, Hashable {
     }
 }
 
-public protocol SpeechRecognizing: Sendable {
-    func transcribe(pcm: [Float], sampleRate: Double) async throws -> [TranscriptSegment]
-}
-
-/// Development stub. Replace with whisper.cpp Metal/CoreML bridge.
+/// Offline stub used when whisper.cpp is not installed.
 public struct WhisperStubRecognizer: SpeechRecognizing {
     public init() {}
 
@@ -28,7 +28,7 @@ public struct WhisperStubRecognizer: SpeechRecognizing {
             TranscriptSegment(
                 startMs: 0,
                 endMs: durationMs,
-                text: "[local whisper pending — install models via Scripts/download-models.sh]"
+                text: "[local whisper pending — run Scripts/setup-whisper-darwin.sh]"
             )
         ]
     }
@@ -37,8 +37,8 @@ public struct WhisperStubRecognizer: SpeechRecognizing {
 public final class ASRService: Sendable {
     private let recognizer: any SpeechRecognizing
 
-    public init(recognizer: any SpeechRecognizing = WhisperStubRecognizer()) {
-        self.recognizer = recognizer
+    public init(recognizer: (any SpeechRecognizing)? = nil) {
+        self.recognizer = recognizer ?? ASRFactory.makeDefault()
     }
 
     public func transcribe(pcm: [Float], sampleRate: Double = 16_000) async throws -> [TranscriptSegment] {

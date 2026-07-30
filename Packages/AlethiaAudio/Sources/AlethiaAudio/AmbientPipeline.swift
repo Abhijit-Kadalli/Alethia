@@ -8,9 +8,10 @@ public final class AmbientPipeline: ObservableObject {
     @Published public private(set) var lastLevel: Float = 0
 
     public var onConversationClosed: ((ConversationSegment) -> Void)?
+    public var onPCM: (([Float]) -> Void)?
 
     private let config: PipelineConfig
-    private let capture: MicrophoneCapture
+    private let capture: AudioCapturing
     private let vadModel: SpeechProbabilityModel
     private let vadGate: VADGate
     private let segmenter: ConversationSegmenter
@@ -19,11 +20,12 @@ public final class AmbientPipeline: ObservableObject {
 
     public init(
         config: PipelineConfig = .default,
-        capture: MicrophoneCapture = MicrophoneCapture(),
-        vadModel: SpeechProbabilityModel = EnergyVADStub()
+        capture: AudioCapturing? = nil,
+        vadModel: SpeechProbabilityModel = EnergyVADStub(),
+        includeSystemAudio: Bool = true
     ) {
         self.config = config
-        self.capture = capture
+        self.capture = capture ?? MixedAudioCapture(includeSystemAudio: includeSystemAudio)
         self.vadModel = vadModel
         self.vadGate = VADGate(config: config)
         self.segmenter = ConversationSegmenter(config: config)
@@ -55,6 +57,7 @@ public final class AmbientPipeline: ObservableObject {
     }
 
     private func ingest(_ samples: [Float]) {
+        onPCM?(samples)
         frameBuffer.append(contentsOf: samples)
         let frameMs = Int(config.frameMs)
         while frameBuffer.count >= samplesPerFrame {

@@ -243,7 +243,7 @@ public final class KnowledgeStore: @unchecked Sendable {
             LIMIT ?;
             """,
             binder: { stmt in
-                bindText(stmt, 1, "\"\(escaped)\"*")
+                bindText(stmt, 1, "\(escaped)*")
                 sqlite3_bind_int(stmt, 2, Int32(limit))
             }
         ) { stmt in

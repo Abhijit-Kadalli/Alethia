@@ -15,6 +15,9 @@ xcuserdata/
 *.perspectivev3
 !default.perspectivev3
 
+# Local toolchains / whisper.cpp builds
+.tools/
+
 # Models (download via Scripts/download-models.sh)
 Models/**
 !Models/.gitkeep
@@ -26,9 +29,14 @@ Models/**
 *.mlpackage
 *.pt
 *.onnx
-*.wav
 *.flac
 *.m4a
+
+# Keep committed smoke fixtures
+!Fixtures/
+!Fixtures/**
+!**/Fixtures/
+!**/Fixtures/**
 
 # Python
 __pycache__/

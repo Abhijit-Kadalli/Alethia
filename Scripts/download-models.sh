@@ -21,13 +21,20 @@ download() {
   curl -L --fail --progress-bar -o "$out" "$url"
 }
 
-# Whisper.cpp ggml (large-v3-turbo quantized) — Hugging Face ggml-org mirror
+# Tiny model — used by Darwin CI smoke tests (fast)
+download \
+  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" \
+  "$MODELS/ggml-tiny.bin"
+
+# Whisper.cpp ggml (large-v3-turbo quantized) for higher quality local ASR
 WHISPER_URL="${WHISPER_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin}"
 download "$WHISPER_URL" "$MODELS/ggml-large-v3-turbo-q5_0.bin"
 
-# Silero VAD (ggml) — optional; EnergyVADStub works until this is wired
-# Uncomment when the exact artifact URL is pinned in docs:
-# download "$SILERO_URL" "$MODELS/ggml-silero-v6.2.0.bin"
+# Placeholder note for ECAPA weights (optional until native GGML runner lands)
+if [[ ! -f "$MODELS/ggml-speaker-ecapa-tdnn.bin" ]]; then
+  echo "note: place ECAPA GGML weights at Models/ggml-speaker-ecapa-tdnn.bin when available"
+  echo "      Alethia falls back to on-device spectral fingerprints until then."
+fi
 
 cat > "$MODELS/README.md" <<'EOF'
 # Models
@@ -36,12 +43,13 @@ Downloaded weights live here and are gitignored.
 
 Expected files (v1):
 
-- `ggml-large-v3-turbo-q5_0.bin` — whisper.cpp ASR
-- `ggml-silero-*.bin` — Silero VAD (optional until CoreML path lands)
-- `ggml-speaker-ecapa-tdnn.bin` — speaker embeddings (optional until wired)
+- `ggml-tiny.bin` — fast ASR for CI / smoke
+- `ggml-large-v3-turbo-q5_0.bin` — higher-quality whisper.cpp ASR
+- `ggml-silero-*.bin` — Silero VAD (optional; energy VAD stub works)
+- `ggml-speaker-ecapa-tdnn.bin` — speaker embeddings (optional; spectral fallback)
 
-Re-run `Scripts/download-models.sh` after cloning.
+Also run `Scripts/setup-whisper-darwin.sh` on macOS to build the Metal whisper-cli.
 EOF
 
 echo
-echo "Done. ASR model ready for whisper.cpp integration."
+echo "Done."
