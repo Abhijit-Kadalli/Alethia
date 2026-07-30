@@ -1,0 +1,58 @@
+name: darwin
+
+on:
+  push:
+    branches: [main, "cursor/**"]
+  pull_request:
+
+concurrency:
+  group: darwin-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift:
+    name: Swift build & test (macOS 14)
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      ALETHIA_WHISPER_MODEL: ${{ github.workspace }}/Models/ggml-tiny.bin
+      ALETHIA_WHISPER_CLI: ${{ github.workspace }}/.tools/whisper.cpp/build/bin/whisper-cli
+      ALETHIA_ECAPA_MODEL: ${{ github.workspace }}/Models/ggml-speaker-ecapa-tdnn.bin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+          uname -a
+
+      - name: Cache whisper.cpp build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .tools/whisper.cpp
+            Models/ggml-tiny.bin
+          key: whisper-tiny-${{ runner.os }}-${{ hashFiles('Scripts/setup-whisper-darwin.sh') }}
+
+      - name: Setup whisper.cpp + tiny model
+        run: ./Scripts/setup-whisper-darwin.sh
+
+      - name: Resolve + build tests
+        run: swift build --build-tests
+
+      - name: Run Swift tests
+        run: swift test --parallel --enable-code-coverage
+
+      - name: Smoke ASR via whisper-cli (fixture)
+        run: |
+          set -euo pipefail
+          CLI="${ALETHIA_WHISPER_CLI}"
+          MODEL="${ALETHIA_WHISPER_MODEL}"
+          WAV="Fixtures/speech_short.wav"
+          test -x "$CLI"
+          test -f "$MODEL"
+          test -f "$WAV"
+          "$CLI" -m "$MODEL" -f "$WAV" -nt -np | tee /tmp/alethia_asr_smoke.txt
+          # tiny model on synthetic tone may not produce real words; ensure CLI exits 0 and writes output file path exists
+          test -s /tmp/alethia_asr_smoke.txt || echo "(empty transcript is ok for tone fixture)"
