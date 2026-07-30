@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import AlethiaCore
 
+@MainActor
 public protocol AudioCapturing: AnyObject {
     var isRunning: Bool { get }
     func start() throws
