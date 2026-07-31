@@ -5,11 +5,14 @@ import AlethiaCore
 public struct DSPFrameFeatures: Sendable {
     public var rms: Float
     public var zeroCrossingRate: Float
+    /// Bin-wise spectral flatness (Hann + power spectrum, DC skipped). Noise → high, speech → low.
     public var spectralFlatness: Float
+    /// Soft energy share in ~85–5500 Hz (includes male F0).
     public var speechBandRatio: Float
 
+    /// Absolute high-recall floor without adaptive context (tests / static checks).
     public var passesNoiseGate: Bool {
-        rms > 0.008 && spectralFlatness < 0.55 && speechBandRatio > 0.25
+        rms >= 0.004
     }
 }
 
@@ -30,16 +33,15 @@ public enum DSPAnalyzer {
         let rms = sqrt(sumSquares / Float(frame.count))
         let zcr = Float(crossings) / Float(max(frame.count - 1, 1))
 
-        // Lightweight magnitude spectrum via Goertzel-ish band energies (no Accelerate dependency here
-        // so the algorithm matches the Python reference). Production Mac path can use vDSP.
-        let bands = bandEnergies(frame: frame, sampleRate: sampleRate)
-        let geo = exp(bands.map { log(max($0, 1e-12)) }.reduce(0, +) / Float(bands.count))
-        let arith = bands.reduce(0, +) / Float(bands.count)
-        let flatness = arith > 0 ? geo / arith : 1
-
-        let speech = (bands[1] + bands[2]) // ~300–3400 Hz proxies
-        let total = max(bands.reduce(0, +), 1e-12)
-        let ratio = speech / total
+        let spectrum = powerSpectrum(frame: frame)
+        let flatness = spectralFlatness(power: spectrum.power)
+        let ratio = speechBandRatio(
+            power: spectrum.power,
+            sampleRate: sampleRate,
+            nFFT: spectrum.nFFT,
+            lowHz: 85,
+            highHz: 5500
+        )
 
         return DSPFrameFeatures(
             rms: rms,
@@ -49,33 +51,83 @@ public enum DSPAnalyzer {
         )
     }
 
-    private static func bandEnergies(frame: [Float], sampleRate: Double) -> [Float] {
-        // Four coarse bands: 0-300, 300-1000, 1000-3400, 3400-Nyquist via FIR-ish box filters on blocks.
-        let n = frame.count
-        let nyquist = sampleRate / 2
-        let edges: [Double] = [0, 300, 1000, 3400, nyquist]
-        var energies = Array(repeating: Float(0), count: edges.count - 1)
+    /// Whether a frame looks noise-like enough to update the adaptive floor.
+    public static func isNoiseLike(_ features: DSPFrameFeatures) -> Bool {
+        features.spectralFlatness >= 0.35 || features.speechBandRatio < 0.12
+    }
 
-        // Simple DFT bins for small frames (n ~ 480). Fine for gating; not for full spectrograms.
+    // MARK: - Spectrum
+
+    private struct Spectrum {
+        var power: [Float]
+        var nFFT: Int
+    }
+
+    /// Hann-windowed real DFT power (skip storing DC in flatness; index 0 is DC).
+    private static func powerSpectrum(frame: [Float]) -> Spectrum {
+        let n = frame.count
+        var windowed = [Float](repeating: 0, count: n)
+        if n == 1 {
+            windowed[0] = frame[0]
+        } else {
+            for i in 0..<n {
+                let w = 0.5 - 0.5 * cos(2 * Float.pi * Float(i) / Float(n - 1))
+                windowed[i] = frame[i] * w
+            }
+        }
+
         let half = n / 2
-        for k in 1..<half {
-            let freq = Double(k) * sampleRate / Double(n)
+        var power = [Float](repeating: 0, count: half + 1)
+        for k in 0...half {
             var re: Float = 0
             var im: Float = 0
             let w = 2 * Float.pi * Float(k) / Float(n)
             for t in 0..<n {
                 let angle = w * Float(t)
-                re += frame[t] * cos(angle)
-                im -= frame[t] * sin(angle)
+                re += windowed[t] * cos(angle)
+                im -= windowed[t] * sin(angle)
             }
-            let mag2 = re * re + im * im
-            for b in 0..<energies.count {
-                if freq >= edges[b] && freq < edges[b + 1] {
-                    energies[b] += mag2
-                    break
-                }
+            power[k] = re * re + im * im
+        }
+        return Spectrum(power: power, nFFT: n)
+    }
+
+    private static func spectralFlatness(power: [Float]) -> Float {
+        // Skip DC (bin 0).
+        guard power.count > 2 else { return 1 }
+        let bins = power[1...]
+        var logSum: Float = 0
+        var arith: Float = 0
+        var count: Float = 0
+        for p in bins {
+            let v = max(p, 1e-12)
+            logSum += log(v)
+            arith += v
+            count += 1
+        }
+        guard count > 0, arith > 0 else { return 1 }
+        let geo = exp(logSum / count)
+        return min(max(geo / (arith / count), 0), 1)
+    }
+
+    private static func speechBandRatio(
+        power: [Float],
+        sampleRate: Double,
+        nFFT: Int,
+        lowHz: Double,
+        highHz: Double
+    ) -> Float {
+        guard power.count > 1, nFFT > 0 else { return 0 }
+        var speech: Float = 0
+        var total: Float = 0
+        for k in 1..<power.count {
+            let freq = Double(k) * sampleRate / Double(nFFT)
+            let p = power[k]
+            total += p
+            if freq >= lowHz && freq < highHz {
+                speech += p
             }
         }
-        return energies
+        return speech / max(total, 1e-12)
     }
 }

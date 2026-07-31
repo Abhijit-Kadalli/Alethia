@@ -8,23 +8,112 @@ import AlethiaDiarization
 import AlethiaDictation
 import AlethiaKnowledge
 
+extension Notification.Name {
+    static let alethiaOpenHub = Notification.Name("alethia.openHub")
+}
+
 @main
 struct AlethiaApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appModel = AppModel()
 
     var body: some Scene {
         MenuBarExtra("Alethia", systemImage: appModel.menuBarSymbol) {
             MenuBarView()
                 .environmentObject(appModel)
+                // Keep an openWindow handle alive; `.menu` style often drops the environment.
+                .background(OpenWindowRegistrar())
         }
-        .menuBarExtraStyle(.menu)
+        .menuBarExtraStyle(.window)
 
         Window("Alethia", id: "hub") {
             HubView()
                 .environmentObject(appModel)
                 .frame(minWidth: 760, minHeight: 520)
+                .background(HubWindowLifecycle())
         }
         .defaultSize(width: 900, height: 600)
+    }
+}
+
+/// SPM `swift run` binaries are not .app bundles; force accessory policy so MenuBarExtra
+/// actually installs a status item instead of behaving like a headless CLI process.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static weak var shared: AppDelegate?
+    var openWindow: OpenWindowAction?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.shared = self
+        NSApp.setActivationPolicy(.accessory)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleOpenHub),
+            name: .alethiaOpenHub,
+            object: nil
+        )
+    }
+
+    @objc private func handleOpenHub() {
+        // Accessory apps can't reliably become key; flip to regular while Hub is visible.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow?(id: "hub")
+        DispatchQueue.main.async {
+            Self.frontHubWindow()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            Self.frontHubWindow()
+        }
+    }
+
+    static func frontHubWindow() {
+        for window in NSApp.windows {
+            let id = window.identifier?.rawValue ?? ""
+            if id.contains("hub") || window.title == "Alethia" {
+                window.makeKeyAndOrderFront(nil)
+                window.orderFrontRegardless()
+            }
+        }
+    }
+
+    static func hubDidClose() {
+        let hubOpen = NSApp.windows.contains {
+            let id = $0.identifier?.rawValue ?? ""
+            return (id.contains("hub") || $0.title == "Alethia") && $0.isVisible
+        }
+        if !hubOpen {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+}
+
+private struct OpenWindowRegistrar: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onAppear { AppDelegate.shared?.openWindow = openWindow }
+            .task {
+                // Re-register after scene updates; MenuBarExtra can recreate content.
+                AppDelegate.shared?.openWindow = openWindow
+            }
+    }
+}
+
+private struct HubWindowLifecycle: View {
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onAppear {
+                NSApp.setActivationPolicy(.regular)
+                AppDelegate.frontHubWindow()
+            }
+            .onDisappear {
+                AppDelegate.hubDidClose()
+            }
     }
 }
 
