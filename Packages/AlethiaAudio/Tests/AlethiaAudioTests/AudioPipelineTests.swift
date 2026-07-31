@@ -10,11 +10,38 @@ final class DSPAnalyzerTests: XCTestCase {
         XCTAssertFalse(features.passesNoiseGate)
     }
 
-    func testTonePassesNoiseGate() {
+    func testTonePassesAbsoluteGate() {
         let frame = tone(freq: 800, samples: 480, amp: 0.2)
         let features = DSPAnalyzer.analyze(frame: frame)
         XCTAssertGreaterThan(features.rms, 0.05)
         XCTAssertTrue(features.passesNoiseGate)
+    }
+
+    func testBinwiseSFMToneLowerThanNoise() {
+        let t = DSPAnalyzer.analyze(frame: tone(freq: 800, samples: 480, amp: 0.2))
+        let n = DSPAnalyzer.analyze(frame: whiteNoise(samples: 480, amp: 0.2))
+        XCTAssertLessThan(t.spectralFlatness, n.spectralFlatness)
+    }
+}
+
+final class ClassicalSpeechScorerTests: XCTestCase {
+    func testMaleF0HighProbability() {
+        let scorer = ClassicalSpeechScorer()
+        for _ in 0..<20 {
+            _ = scorer.assess(frame: whiteNoise(samples: 480, amp: 0.002))
+        }
+        let a = scorer.assess(frame: tone(freq: 120, samples: 480, amp: 0.12))
+        XCTAssertTrue(a.energyPassed)
+        XCTAssertGreaterThanOrEqual(a.probability, 0.50)
+    }
+
+    func testWhiteNoiseCappedBelowOpen() {
+        let scorer = ClassicalSpeechScorer()
+        var last = scorer.assess(frame: whiteNoise(samples: 480, amp: 0.08))
+        for _ in 0..<30 {
+            last = scorer.assess(frame: whiteNoise(samples: 480, amp: 0.08))
+        }
+        XCTAssertLessThanOrEqual(last.probability, 0.28)
     }
 }
 
@@ -62,23 +89,8 @@ final class ConversationSegmenterTests: XCTestCase {
     }
 
     func testDiscardsTooShortConversationOnForceClose() {
-        var config = PipelineConfig.default
-        config.minConversationSpeechMs = 5_000
-        let segmenter = ConversationSegmenter(config: config)
-        let frame = tone(freq: 500, samples: 160, amp: 0.1)
-        // Force open path by feeding enough window speech relative to lowered threshold... 
-        // With min 5000, open needs 5000ms speech. Feed that, then forceClose after little speech in active? 
-        // Actually once opened, speechMs resets to frameMs. Force close quickly -> discarded.
-        config.minConversationSpeechMs = 90
-        let seg2 = ConversationSegmenter(config: config)
-        _ = seg2.process(isSpeech: true, frame: frame, frameMs: 100)
-        if case .discarded? = seg2.forceClose() {
-            // opened with 100ms then force close -> speechMs may be 100 < 90? 100 >= 90 so closed
-        }
-        // Open then immediately force close with high min
         var high = PipelineConfig.default
         high.minConversationSpeechMs = 10_000
-        // Can't open without 10s speech. Verify forceClose nil when inactive.
         let idle = ConversationSegmenter(config: high)
         XCTAssertNil(idle.forceClose())
     }
@@ -88,4 +100,8 @@ private func tone(freq: Float, samples: Int, amp: Float, sampleRate: Float = 16_
     (0..<samples).map { i in
         amp * sin(2 * Float.pi * freq * Float(i) / sampleRate)
     }
+}
+
+private func whiteNoise(samples: Int, amp: Float) -> [Float] {
+    (0..<samples).map { _ in amp * Float.random(in: -1...1) }
 }

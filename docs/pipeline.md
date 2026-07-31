@@ -12,25 +12,25 @@ Everything downstream of capture is **16 kHz mono Float32** (whisper/ECAPA nativ
 
 ## Stage 2 — Classical DSP (always on)
 
-Per 20–30 ms frame:
+Per 20–30 ms frame (see [`dsp_vad_redesign.md`](dsp_vad_redesign.md)):
 
 | Feature | Use |
 |---------|-----|
-| RMS energy | Noise gate / adaptive threshold |
-| Zero-crossing rate | Rough voiced vs unvoiced |
-| Spectral flatness | Reject noise-like frames |
-| Band energy ratios | Boost speech band confidence |
+| RMS + adaptive floor | High-recall energy gate only |
+| Bin-wise spectral flatness (Hann) | Structure for speech probability |
+| Speech band 85–5500 Hz | Structure + rumble reject |
+| Zero-crossing rate | Unvoiced / fricative boost |
 
-Frames that fail the noise gate never reach VAD/ASR.
+`ClassicalSpeechScorer` produces `probability` + `energyPassed`. Failed energy caps `p` at 0.2 in `VADGate`.
 
 Python reference: [`Tools/dsp_reference`](../Tools/dsp_reference).
 
-## Stage 3 — Silero VAD
+## Stage 3 — Speech probability + hysteresis
 
-Neural VAD outputs speech probability per frame. Hysteresis:
+Default: classical scorer (Silero protocol-ready later). Hysteresis:
 
-- Open speech when `p > 0.5` for ≥150 ms
-- Close speech when `p < 0.35` for ≥400 ms
+- Open speech when `p ≥ 0.5` for ≥150 ms
+- Close speech when `p ≤ 0.35` for ≥500 ms
 
 ## Stage 4 — Conversation segmenter
 

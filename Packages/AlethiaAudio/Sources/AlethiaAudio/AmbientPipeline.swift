@@ -65,12 +65,11 @@ public final class AmbientPipeline: ObservableObject {
             let frame = Array(frameBuffer.prefix(samplesPerFrame))
             frameBuffer.removeFirst(samplesPerFrame)
 
-            let features = DSPAnalyzer.analyze(frame: frame, sampleRate: config.sampleRate)
-            lastLevel = features.rms
-            let p = vadModel.probability(frame: frame)
+            let assessment = vadModel.assess(frame: frame, sampleRate: config.sampleRate)
+            lastLevel = assessment.features.rms
             let speechState = vadGate.process(
-                probability: p,
-                dspPassed: features.passesNoiseGate,
+                probability: assessment.probability,
+                dspPassed: assessment.energyPassed,
                 frameMs: frameMs
             )
             let isSpeech = speechState == .speech

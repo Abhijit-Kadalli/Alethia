@@ -4,15 +4,13 @@ import AlethiaCore
 
 struct MenuBarView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(model.statusMessage)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Divider()
 
@@ -29,14 +27,16 @@ struct MenuBarView: View {
             }
 
             Toggle("Include system audio", isOn: $model.includeSystemAudio)
-                .padding(.horizontal, 12)
 
             Divider()
 
-            Button("Open Hub") { openWindow(id: "hub") }
+            Button("Open Hub") {
+                NotificationCenter.default.post(name: .alethiaOpenHub, object: nil)
+            }
             Button("Quit Alethia") { NSApplication.shared.terminate(nil) }
         }
-        .frame(minWidth: 240)
+        .padding(12)
+        .frame(minWidth: 260)
     }
 }
 
