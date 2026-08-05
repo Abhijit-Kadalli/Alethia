@@ -21,6 +21,6 @@ Alethia is designed to keep conversation audio and transcripts on your Mac.
 
 ## Data at rest
 
-SQLite knowledge store under Application Support. Model weights for CrisperWhisper live in the Hugging Face cache used by the local sidecar; optional ECAPA weights under `Models/`.
+SQLite knowledge store under Application Support. Model weights for CrisperWhisper and SpeechBrain ECAPA live in local caches used by the sidecar (`~/.cache/huggingface`, `~/.cache/alethia/ecapa-voxceleb`).
 
 See also [architecture.md](architecture.md).

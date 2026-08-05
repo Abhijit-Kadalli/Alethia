@@ -429,27 +429,24 @@ final class AppModel: ObservableObject {
 
     private func finalizeMeeting(_ capture: MeetingCapture) async {
         do {
-            async let verbatimTask = asr.transcribe(
+            let durationSec = Double(capture.pcm.count) / max(capture.sampleRate, 1)
+            statusMessage = String(format: "Transcribing %.0fs…", durationSec)
+
+            // One ASR pass only (verbatim + word timings). A second parallel pass
+            // contended for MPS and roughly doubled wall time.
+            let transcripts = try await asr.transcribe(
                 pcm: capture.pcm,
                 sampleRate: capture.sampleRate,
                 mode: .verbatim,
                 wordTimestamps: true
             )
-            async let intendedTask = asr.transcribe(
-                pcm: capture.pcm,
-                sampleRate: capture.sampleRate,
-                mode: .intended,
-                wordTimestamps: true
-            )
-            let transcripts = try await verbatimTask
-            let intended = (try? await intendedTask) ?? []
             let allWords = transcripts.flatMap(\.words)
 
             let diarized = try diarizer.diarize(
                 pcm: capture.pcm,
                 sampleRate: capture.sampleRate,
                 transcripts: transcripts.map { ($0.startMs, $0.endMs, $0.text) },
-                intendedTranscripts: intended.map { ($0.startMs, $0.endMs, $0.text) }
+                intendedTranscripts: []
             )
 
             var utterances = diarized.map { d in
@@ -478,27 +475,10 @@ final class AppModel: ObservableObject {
                     )
                 }
             } else if utterances.allSatisfy(\.words.isEmpty), !allWords.isEmpty {
-                // Fallback: attach all words to the single span / distribute by time.
                 for i in utterances.indices {
                     utterances[i].words = allWords.filter {
-                        $0.startMs >= utterances[i].startMs && $0.startMs < max(utterances[i].endMs, utterances[i].startMs + 1)
-                    }
-                }
-            }
-            // If intended came back as one blob, attach it across utterances for the toggle.
-            if utterances.allSatisfy({ $0.intendedText == nil }),
-               let fullIntended = intended.map(\.text).joined(separator: " ").nilIfEmptyTrimmed {
-                let words = fullIntended.split(whereSeparator: \.isWhitespace).map(String.init)
-                if !words.isEmpty, !utterances.isEmpty {
-                    let total = max(utterances.reduce(0) { $0 + max($1.endMs - $1.startMs, 1) }, 1)
-                    var cursor = 0
-                    for i in utterances.indices {
-                        let share = Double(max(utterances[i].endMs - utterances[i].startMs, 1)) / Double(total)
-                        var count = Int((share * Double(words.count)).rounded())
-                        if i == utterances.count - 1 { count = words.count - cursor }
-                        let end = min(cursor + max(count, 0), words.count)
-                        utterances[i].intendedText = words[cursor..<end].joined(separator: " ")
-                        cursor = end
+                        $0.startMs >= utterances[i].startMs
+                            && $0.startMs < max(utterances[i].endMs, utterances[i].startMs + 1)
                     }
                 }
             }
@@ -518,13 +498,93 @@ final class AppModel: ObservableObject {
                 statusMessage = "Meeting ended — no speech detected"
                 return
             }
+
+            // Archive WAV so Hub timestamps can jump into the recording.
+            let audioRel = store.relativeRecordingPath(for: session.id)
+            let audioURL = store.recordingURL(for: session.id)
+            do {
+                try PCMWAVEncoder.write(
+                    pcm: capture.pcm,
+                    sampleRate: Int(capture.sampleRate),
+                    to: audioURL
+                )
+                session.audioPath = audioRel
+            } catch {
+                // Meeting transcript still saves; playback just won't be available.
+                statusMessage = "Meeting saved without audio archive: \(error.localizedDescription)"
+            }
+
             let speakerCount = Set(utterances.compactMap(\.speakerID)).count
             try store.saveSession(session)
             selectedMeetingID = session.id
-            statusMessage = "Meeting saved · \(utterances.count) lines · \(max(speakerCount, 1)) speakers"
+            if session.audioPath != nil {
+                statusMessage = "Meeting saved · \(utterances.count) lines · \(max(speakerCount, 1)) speakers · audio ready"
+            } else if statusMessage.hasPrefix("Meeting saved without") {
+                // keep audio error
+            } else {
+                statusMessage = "Meeting saved · \(utterances.count) lines · \(max(speakerCount, 1)) speakers"
+            }
             reload()
+
+            // Fill Clean/intended transcript in the background (no word timestamps).
+            let sessionID = session.id
+            let pcm = capture.pcm
+            let sampleRate = capture.sampleRate
+            Task { await self.fillIntendedTranscript(sessionID: sessionID, pcm: pcm, sampleRate: sampleRate) }
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    /// Second, lighter ASR pass for the Hub Clean toggle — does not block meeting save.
+    private func fillIntendedTranscript(sessionID: UUID, pcm: [Float], sampleRate: Double) async {
+        do {
+            let intended = try await asr.transcribe(
+                pcm: pcm,
+                sampleRate: sampleRate,
+                mode: .intended,
+                wordTimestamps: false
+            )
+            guard let fullIntended = intended.map(\.text).joined(separator: " ").nilIfEmptyTrimmed else { return }
+            guard var session = try store.session(id: sessionID), !session.utterances.isEmpty else { return }
+
+            let words = fullIntended.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard !words.isEmpty else { return }
+
+            // Prefer time-overlap segments when intended ASR returned timed phrases.
+            let timed = intended.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if timed.count > 1 {
+                for i in session.utterances.indices {
+                    let u = session.utterances[i]
+                    let parts = timed.compactMap { seg -> String? in
+                        let lo = max(u.startMs, seg.startMs)
+                        let hi = min(u.endMs, seg.endMs)
+                        return hi > lo ? seg.text : nil
+                    }
+                    let joined = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !joined.isEmpty {
+                        session.utterances[i].intendedText = joined
+                    }
+                }
+            } else {
+                let total = max(session.utterances.reduce(0) { $0 + max($1.endMs - $1.startMs, 1) }, 1)
+                var cursor = 0
+                for i in session.utterances.indices {
+                    let share = Double(max(session.utterances[i].endMs - session.utterances[i].startMs, 1)) / Double(total)
+                    var count = Int((share * Double(words.count)).rounded())
+                    if i == session.utterances.count - 1 { count = words.count - cursor }
+                    let end = min(cursor + max(count, 0), words.count)
+                    session.utterances[i].intendedText = words[cursor..<end].joined(separator: " ")
+                    cursor = end
+                }
+            }
+
+            try store.saveSession(session)
+            if selectedMeetingID == sessionID {
+                reload()
+            }
+        } catch {
+            // Meeting already saved; Clean toggle can fall back to verbatim.
         }
     }
 }

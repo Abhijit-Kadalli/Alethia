@@ -10,6 +10,8 @@ public struct ConversationSession: Identifiable, Codable, Sendable, Hashable {
     /// Markdown meeting notes generated via OpenRouter (optional).
     public var notesMarkdown: String?
     public var notesGeneratedAt: Date?
+    /// Relative path under Application Support/Alethia (e.g. `Recordings/<id>.wav`).
+    public var audioPath: String?
 
     public init(
         id: UUID = UUID(),
@@ -19,7 +21,8 @@ public struct ConversationSession: Identifiable, Codable, Sendable, Hashable {
         source: CaptureSource = .meeting,
         utterances: [Utterance] = [],
         notesMarkdown: String? = nil,
-        notesGeneratedAt: Date? = nil
+        notesGeneratedAt: Date? = nil,
+        audioPath: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -29,6 +32,7 @@ public struct ConversationSession: Identifiable, Codable, Sendable, Hashable {
         self.utterances = utterances
         self.notesMarkdown = notesMarkdown
         self.notesGeneratedAt = notesGeneratedAt
+        self.audioPath = audioPath
     }
 }
 

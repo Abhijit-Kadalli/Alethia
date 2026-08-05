@@ -26,8 +26,8 @@ public struct PipelineConfig: Codable, Sendable {
         openSpeechMs: 150,
         closeSilenceMs: 500,
         minConversationSpeechMs: 1500,
-        speakerMatchThreshold: 0.62,
-        speakerSuggestionThreshold: 0.80
+        speakerMatchThreshold: 0.35,
+        speakerSuggestionThreshold: 0.55
     )
 
     public init(
@@ -39,7 +39,7 @@ public struct PipelineConfig: Codable, Sendable {
         closeSilenceMs: Int,
         minConversationSpeechMs: Int,
         speakerMatchThreshold: Float,
-        speakerSuggestionThreshold: Float = 0.80
+        speakerSuggestionThreshold: Float = 0.55
     ) {
         self.sampleRate = sampleRate
         self.frameMs = frameMs

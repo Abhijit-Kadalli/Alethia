@@ -86,4 +86,5 @@ CrisperWhisper sidecar ready ($MODE_MSG).
   stub:   ALETHIA_CRISPER_STUB=1 ./Scripts/start-crisper-sidecar.sh
 
 First real transcription downloads the model (default: turbo) into the HF cache.
+First ECAPA load downloads SpeechBrain weights into ~/.cache/alethia/ecapa-voxceleb.
 EOF

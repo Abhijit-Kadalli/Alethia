@@ -66,7 +66,7 @@ Domain types (`ConversationSession`, `Utterance`, `SpeakerProfile`, `DictationEv
 CrisperWhisper Python sidecar client. Consumes PCM segments; emits timestamped text (`intended` for dictation, `verbatim` for meetings).
 
 ### AlethiaDiarization
-ECAPA-TDNN embeddings per utterance → agglomerative clustering within a session → cosine match against the persistent speaker gallery.
+ECAPA-TDNN embeddings (SpeechBrain via sidecar `POST /embed`) per utterance → agglomerative clustering within a session → cosine match against the persistent speaker gallery. Spectral fingerprints are used only if ECAPA is unavailable.
 
 ### AlethiaDictation
 Fn hotkey monitor, overlay waveform, Accessibility keystroke insertion, dictation artifact persistence via Knowledge.

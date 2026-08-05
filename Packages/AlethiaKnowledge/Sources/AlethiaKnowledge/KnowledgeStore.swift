@@ -82,6 +82,33 @@ public final class KnowledgeStore: @unchecked Sendable {
         _ = sqlite3_exec(db, "ALTER TABLE utterances ADD COLUMN suggested_label TEXT;", nil, nil, nil)
         _ = sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN notes_markdown TEXT;", nil, nil, nil)
         _ = sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN notes_generated_at REAL;", nil, nil, nil)
+        _ = sqlite3_exec(db, "ALTER TABLE sessions ADD COLUMN audio_path TEXT;", nil, nil, nil)
+    }
+
+    /// Application Support/Alethia root used for the SQLite DB and recordings.
+    public var supportDirectory: URL {
+        path.deletingLastPathComponent()
+    }
+
+    public var recordingsDirectory: URL {
+        supportDirectory.appendingPathComponent("Recordings", isDirectory: true)
+    }
+
+    public func recordingURL(for sessionID: UUID) -> URL {
+        recordingsDirectory.appendingPathComponent("\(sessionID.uuidString).wav")
+    }
+
+    public func relativeRecordingPath(for sessionID: UUID) -> String {
+        "Recordings/\(sessionID.uuidString).wav"
+    }
+
+    public func resolveAudioURL(for session: ConversationSession) -> URL? {
+        if let rel = session.audioPath, !rel.isEmpty {
+            let url = supportDirectory.appendingPathComponent(rel)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        let fallback = recordingURL(for: session.id)
+        return FileManager.default.fileExists(atPath: fallback.path) ? fallback : nil
     }
 
     public func upsertSpeaker(_ speaker: SpeakerProfile) throws {
@@ -111,14 +138,15 @@ public final class KnowledgeStore: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         try exec(
             """
-            INSERT INTO sessions(id, title, started_at, ended_at, source, notes_markdown, notes_generated_at)
-            VALUES(?,?,?,?,?,?,?)
+            INSERT INTO sessions(id, title, started_at, ended_at, source, notes_markdown, notes_generated_at, audio_path)
+            VALUES(?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               title=excluded.title,
               ended_at=excluded.ended_at,
               source=excluded.source,
               notes_markdown=excluded.notes_markdown,
-              notes_generated_at=excluded.notes_generated_at;
+              notes_generated_at=excluded.notes_generated_at,
+              audio_path=COALESCE(excluded.audio_path, sessions.audio_path);
             """,
             binder: { stmt in
                 bindText(stmt, 1, session.id.uuidString)
@@ -136,6 +164,7 @@ public final class KnowledgeStore: @unchecked Sendable {
                 } else {
                     sqlite3_bind_null(stmt, 7)
                 }
+                if let audio = session.audioPath { bindText(stmt, 8, audio) } else { sqlite3_bind_null(stmt, 8) }
             }
         )
 
@@ -284,27 +313,49 @@ public final class KnowledgeStore: @unchecked Sendable {
         )
     }
 
-    /// Deletes a meeting session, its utterances (CASCADE), FTS rows, and nullifies linked dictations.
+    /// Deletes a meeting session, its utterances (CASCADE), FTS rows, recording file, and nullifies linked dictations.
     public func deleteSession(id: UUID) throws {
-        lock.lock(); defer { lock.unlock() }
-        var utteranceIDs: [UUID] = []
-        try query(
-            "SELECT id FROM utterances WHERE session_id=?;",
-            binder: { bindText($0, 1, id.uuidString) }
-        ) { stmt in
-            if let uuid = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))) {
-                utteranceIDs.append(uuid)
+        lock.lock()
+        var audioRel: String?
+        do {
+            try query(
+                "SELECT audio_path FROM sessions WHERE id=? LIMIT 1;",
+                binder: { bindText($0, 1, id.uuidString) }
+            ) { stmt in
+                audioRel = sqlite3_column_text(stmt, 0).map { String(cString: $0) }
             }
+            var utteranceIDs: [UUID] = []
+            try query(
+                "SELECT id FROM utterances WHERE session_id=?;",
+                binder: { bindText($0, 1, id.uuidString) }
+            ) { stmt in
+                if let uuid = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))) {
+                    utteranceIDs.append(uuid)
+                }
+            }
+            for uid in utteranceIDs {
+                try exec("DELETE FROM fts_documents WHERE doc_id=?;", binder: { bindText($0, 1, uid.uuidString) })
+            }
+            try exec("DELETE FROM fts_documents WHERE doc_id=?;", binder: { bindText($0, 1, id.uuidString) })
+            try exec(
+                "UPDATE dictations SET session_id=NULL WHERE session_id=?;",
+                binder: { bindText($0, 1, id.uuidString) }
+            )
+            try exec("DELETE FROM sessions WHERE id=?;", binder: { bindText($0, 1, id.uuidString) })
+        } catch {
+            lock.unlock()
+            throw error
         }
-        for uid in utteranceIDs {
-            try exec("DELETE FROM fts_documents WHERE doc_id=?;", binder: { bindText($0, 1, uid.uuidString) })
+        lock.unlock()
+
+        // Remove recording outside the DB lock.
+        let candidates: [URL] = [
+            audioRel.map { supportDirectory.appendingPathComponent($0) },
+            recordingURL(for: id)
+        ].compactMap { $0 }
+        for url in Set(candidates.map(\.path)).map({ URL(fileURLWithPath: $0) }) {
+            try? FileManager.default.removeItem(at: url)
         }
-        try exec("DELETE FROM fts_documents WHERE doc_id=?;", binder: { bindText($0, 1, id.uuidString) })
-        try exec(
-            "UPDATE dictations SET session_id=NULL WHERE session_id=?;",
-            binder: { bindText($0, 1, id.uuidString) }
-        )
-        try exec("DELETE FROM sessions WHERE id=?;", binder: { bindText($0, 1, id.uuidString) })
     }
 
     public func sessionID(forUtteranceID id: UUID) throws -> UUID? {
@@ -341,7 +392,7 @@ public final class KnowledgeStore: @unchecked Sendable {
         var sessions: [ConversationSession] = []
         try query(
             """
-            SELECT id, title, started_at, ended_at, source, notes_markdown, notes_generated_at
+            SELECT id, title, started_at, ended_at, source, notes_markdown, notes_generated_at, audio_path
             FROM sessions ORDER BY started_at DESC LIMIT ?;
             """,
             binder: { sqlite3_bind_int($0, 1, Int32(limit)) }
@@ -360,7 +411,7 @@ public final class KnowledgeStore: @unchecked Sendable {
         var found: ConversationSession?
         try query(
             """
-            SELECT id, title, started_at, ended_at, source, notes_markdown, notes_generated_at
+            SELECT id, title, started_at, ended_at, source, notes_markdown, notes_generated_at, audio_path
             FROM sessions WHERE id=? LIMIT 1;
             """,
             binder: { bindText($0, 1, id.uuidString) }
@@ -384,6 +435,7 @@ public final class KnowledgeStore: @unchecked Sendable {
         let notesAt: Date? = sqlite3_column_type(stmt, 6) == SQLITE_NULL
             ? nil
             : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 6))
+        let audio = sqlite3_column_text(stmt, 7).map { String(cString: $0) }
         return ConversationSession(
             id: id,
             title: title,
@@ -391,7 +443,8 @@ public final class KnowledgeStore: @unchecked Sendable {
             endedAt: ended,
             source: source,
             notesMarkdown: notes,
-            notesGeneratedAt: notesAt
+            notesGeneratedAt: notesAt,
+            audioPath: audio
         )
     }
 

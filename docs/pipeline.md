@@ -32,7 +32,7 @@ Sidecar setup: `Scripts/setup-crisperwhisper.sh` / `Scripts/start-crisper-sideca
 
 For each ASR utterance window (or fixed 1.5–3 s speech windows):
 
-1. Compute 192-dim ECAPA-TDNN embedding (spectral fallback until GGML weights land)
+1. Compute 192-dim ECAPA-TDNN embedding via sidecar `POST /embed` (SpeechBrain); spectral fallback if sidecar/ECAPA is down
 2. Cluster embeddings within the session (agglomerative, cosine linkage)
 3. Match cluster centroids to the **speaker gallery**
 4. User rename → update gallery centroid (EMA) and rewrite labels

@@ -5,6 +5,7 @@ Endpoints:
   GET  /health
   POST /transcribe  — multipart field `audio` (WAV) or raw WAV body
       query/form: mode=intended|verbatim, language=en, word_timestamps=0|1
+  POST /embed       — multipart field `audio` (WAV) → ECAPA-TDNN 192-d embedding
 
 Env:
   ALETHIA_CRISPER_HOST (default 127.0.0.1)
@@ -12,12 +13,15 @@ Env:
   ALETHIA_CRISPER_MODEL (default small — snappy dictation; use turbo for quality)
   ALETHIA_CRISPER_DEVICE (default auto — prefers MPS on Apple Silicon)
   ALETHIA_CRISPER_STUB=1 — no model load; returns deterministic stub text
+  ALETHIA_ECAPA=0 — disable SpeechBrain ECAPA (spectral fallback only)
+  ALETHIA_ECAPA_PRELOAD=0 — skip ECAPA warm-load at startup
 """
 
 from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import time
 from typing import Any
 
@@ -26,10 +30,18 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 
 _MODEL = None
+_ECAPA = None
+_ECAPA_ERROR: str | None = None
 _STUB = os.environ.get("ALETHIA_CRISPER_STUB", "").strip() in ("1", "true", "yes")
 _MODEL_NAME = os.environ.get("ALETHIA_CRISPER_MODEL", "small").strip() or "small"
 _DEVICE = os.environ.get("ALETHIA_CRISPER_DEVICE", "auto").strip() or "auto"
 _LOAD_ERROR: str | None = None
+_INFER_LOCK = threading.Lock()
+_ECAPA_LOCK = threading.Lock()
+_ECAPA_ENABLED = os.environ.get("ALETHIA_ECAPA", "1").strip().lower() not in ("0", "false", "no")
+_ECAPA_SOURCE = os.environ.get(
+    "ALETHIA_ECAPA_MODEL", "speechbrain/spkrec-ecapa-voxceleb"
+).strip() or "speechbrain/spkrec-ecapa-voxceleb"
 
 
 def _resolve_device() -> str:
@@ -69,6 +81,58 @@ def get_model():
     return _MODEL
 
 
+def get_ecapa():
+    """Lazy-load SpeechBrain ECAPA-TDNN (VoxCeleb) for 192-d speaker embeddings."""
+    global _ECAPA, _ECAPA_ERROR
+    if _STUB or not _ECAPA_ENABLED:
+        return None
+    if _ECAPA is not None:
+        return _ECAPA
+    with _ECAPA_LOCK:
+        if _ECAPA is not None:
+            return _ECAPA
+        try:
+            import torch
+            from speechbrain.inference.speaker import EncoderClassifier
+
+            device = _resolve_device()
+            # Some SpeechBrain ops are flaky on MPS — fall back to CPU if needed.
+            savedir = os.path.expanduser("~/.cache/alethia/ecapa-voxceleb")
+            os.makedirs(savedir, exist_ok=True)
+            print(f"Loading ECAPA source={_ECAPA_SOURCE} device={device}", flush=True)
+            try:
+                _ECAPA = EncoderClassifier.from_hparams(
+                    source=_ECAPA_SOURCE,
+                    savedir=savedir,
+                    run_opts={"device": device},
+                )
+            except Exception as mps_exc:  # noqa: BLE001
+                if device != "cpu":
+                    print(f"ECAPA on {device} failed ({mps_exc}); retrying on CPU", flush=True)
+                    _ECAPA = EncoderClassifier.from_hparams(
+                        source=_ECAPA_SOURCE,
+                        savedir=savedir,
+                        run_opts={"device": "cpu"},
+                    )
+                else:
+                    raise
+            _ECAPA_ERROR = None
+            # Warm a tiny silence encode so first real call is faster.
+            try:
+                warm = torch.zeros(1, 16000)
+                with torch.inference_mode():
+                    _ = _ECAPA.encode_batch(warm)
+            except Exception:  # noqa: BLE001
+                pass
+            print("ECAPA ready.", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            _ECAPA_ERROR = str(exc)
+            _ECAPA = None
+            print(f"ECAPA load failed: {exc}", flush=True)
+            raise
+    return _ECAPA
+
+
 @app.get("/health")
 def health():
     return jsonify(
@@ -79,6 +143,105 @@ def health():
             "device": None if _STUB else _resolve_device(),
             "loaded": _STUB or _MODEL is not None,
             "error": _LOAD_ERROR,
+            "ecapa": {
+                "enabled": _ECAPA_ENABLED and not _STUB,
+                "loaded": _ECAPA is not None,
+                "source": _ECAPA_SOURCE,
+                "dim": 192,
+                "error": _ECAPA_ERROR,
+            },
+        }
+    )
+
+
+def _read_audio_bytes() -> bytes | None:
+    if "audio" in request.files:
+        return request.files["audio"].read()
+    if request.content_type and "wav" in (request.content_type or ""):
+        return request.get_data()
+    if request.data:
+        return request.get_data()
+    return None
+
+
+@app.post("/embed")
+def embed_speaker():
+    """Return L2-normalized 192-d ECAPA embedding for a mono WAV clip."""
+    t0 = time.perf_counter()
+    if _STUB:
+        # Deterministic stub vector for CI.
+        emb = [0.0] * 192
+        emb[0] = 1.0
+        return jsonify(
+            {
+                "embedding": emb,
+                "dim": 192,
+                "backend": "stub",
+                "elapsed_ms": 0,
+            }
+        )
+    if not _ECAPA_ENABLED:
+        return jsonify({"error": "ECAPA disabled (ALETHIA_ECAPA=0)", "backend": None}), 503
+
+    audio_bytes = _read_audio_bytes()
+    if not audio_bytes:
+        return jsonify({"error": "missing audio"}), 400
+
+    try:
+        classifier = get_ecapa()
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"ecapa load failed: {exc}", "backend": None}), 503
+    if classifier is None:
+        return jsonify({"error": "ecapa unavailable", "backend": None}), 503
+
+    import numpy as np
+    import soundfile as sf
+    import torch
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+        tmp.write(audio_bytes)
+        tmp.flush()
+        try:
+            wav, sr = sf.read(tmp.name, dtype="float32", always_2d=False)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": f"wav decode failed: {exc}"}), 400
+
+    if getattr(wav, "ndim", 1) > 1:
+        wav = np.mean(wav, axis=1)
+    wav = np.asarray(wav, dtype=np.float32)
+    if wav.size < int(0.25 * (sr or 16000)):
+        return jsonify({"error": "audio too short for embedding (<250ms)"}), 400
+
+    if sr and int(sr) != 16000:
+        # Linear resample to 16 kHz (SpeechBrain ECAPA expects 16k).
+        duration = wav.shape[0] / float(sr)
+        target = max(int(duration * 16000), 1)
+        x_old = np.linspace(0.0, 1.0, num=wav.shape[0], endpoint=False)
+        x_new = np.linspace(0.0, 1.0, num=target, endpoint=False)
+        wav = np.interp(x_new, x_old, wav).astype(np.float32)
+        sr = 16000
+
+    signal = torch.from_numpy(wav).unsqueeze(0)  # [1, T]
+    try:
+        with _ECAPA_LOCK:
+            with torch.inference_mode():
+                emb_t = classifier.encode_batch(signal)
+                emb_t = torch.nn.functional.normalize(emb_t, dim=-1)
+        emb = emb_t.squeeze().detach().cpu().float().tolist()
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"ecapa encode failed: {exc}"}), 500
+
+    if not isinstance(emb, list):
+        emb = list(emb)
+    elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    print(f"embed ecapa dim={len(emb)} audio={wav.shape[0]/sr}s elapsed={elapsed_ms}ms", flush=True)
+    return jsonify(
+        {
+            "embedding": emb,
+            "dim": len(emb),
+            "backend": "speechbrain-ecapa",
+            "source": _ECAPA_SOURCE,
+            "elapsed_ms": elapsed_ms,
         }
     )
 
@@ -204,14 +367,21 @@ def transcribe():
             "language": language,
             "mode": mode,
             "word_timestamps": bool(word_ts),
+            # Faster defaults for interactive dictation / meeting finalize.
             "hallucination_mitigation": False,
+            "temperature_fallback": os.environ.get("ALETHIA_CRISPER_TEMP_FALLBACK", "").strip().lower()
+            in ("1", "true", "yes"),
+            "early_eot_recovery": os.environ.get("ALETHIA_CRISPER_EARLY_EOT", "1").strip().lower()
+            not in ("0", "false", "no"),
         }
         try:
-            result = model.transcribe(tmp.name, **kwargs)
+            with _INFER_LOCK:
+                result = model.transcribe(tmp.name, **kwargs)
         except ModuleNotFoundError as exc:
             if "ctranslate2" in str(exc) and kwargs.get("word_timestamps"):
                 kwargs["word_timestamps"] = False
-                result = model.transcribe(tmp.name, **kwargs)
+                with _INFER_LOCK:
+                    result = model.transcribe(tmp.name, **kwargs)
             else:
                 return jsonify({"error": str(exc), "stub": False}), 500
         except Exception as exc:  # noqa: BLE001
@@ -219,7 +389,8 @@ def transcribe():
             if kwargs.get("word_timestamps"):
                 try:
                     kwargs["word_timestamps"] = False
-                    result = model.transcribe(tmp.name, **kwargs)
+                    with _INFER_LOCK:
+                        result = model.transcribe(tmp.name, **kwargs)
                 except Exception as exc2:  # noqa: BLE001
                     return jsonify({"error": str(exc2), "stub": False}), 500
             else:
@@ -275,6 +446,16 @@ def main():
         print(f"Loading CrisperWhisper model={_MODEL_NAME}…", flush=True)
         get_model()
         print("Model ready.", flush=True)
+        preload = os.environ.get("ALETHIA_ECAPA_PRELOAD", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+        if _ECAPA_ENABLED and preload:
+            try:
+                get_ecapa()
+            except Exception as exc:  # noqa: BLE001
+                print(f"ECAPA warm-load skipped: {exc}", flush=True)
     else:
         print("CrisperWhisper sidecar running in STUB mode.", flush=True)
 

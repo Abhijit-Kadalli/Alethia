@@ -59,7 +59,10 @@ let package = Package(
         .target(
             name: "AlethiaDiarization",
             dependencies: ["AlethiaCore", "AlethiaKnowledge"],
-            path: "Packages/AlethiaDiarization/Sources/AlethiaDiarization"
+            path: "Packages/AlethiaDiarization/Sources/AlethiaDiarization",
+            linkerSettings: [
+                .linkedFramework("Accelerate")
+            ]
         ),
         .testTarget(
             name: "AlethiaDiarizationTests",

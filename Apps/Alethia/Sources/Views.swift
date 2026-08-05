@@ -92,6 +92,10 @@ struct HubView: View {
                                     Text("·")
                                     Image(systemName: "doc.text")
                                 }
+                                if session.audioPath != nil {
+                                    Text("·")
+                                    Image(systemName: "waveform")
+                                }
                             }
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
@@ -242,6 +246,7 @@ struct MeetingDetailView: View {
     var onDelete: () -> Void = {}
 
     @State private var labelDrafts: [UUID: String] = [:]
+    @StateObject private var audio = MeetingAudioPlayer()
 
     private var people: [MeetingPerson] {
         MeetingPerson.unique(from: session.utterances)
@@ -251,6 +256,9 @@ struct MeetingDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
+                if audio.hasAudio || session.audioPath != nil {
+                    audioBar
+                }
                 peopleSection
                 notesSection
                 transcriptSection
@@ -287,9 +295,14 @@ struct MeetingDetailView: View {
                     labelDrafts[person.id] = person.label
                 }
             }
+            audio.load(url: model.store.resolveAudioURL(for: session))
         }
         .onChange(of: session.id) { _, _ in
             labelDrafts = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.label) })
+            audio.load(url: model.store.resolveAudioURL(for: session))
+        }
+        .onDisappear {
+            audio.pause()
         }
     }
 
@@ -320,6 +333,55 @@ struct MeetingDetailView: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    private var audioBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Button {
+                    audio.toggle()
+                } label: {
+                    Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title3)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!audio.hasAudio)
+                .help(audio.hasAudio ? "Play / pause recording" : "No audio archived for this meeting")
+
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(
+                        value: Double(audio.currentMs),
+                        total: Double(max(audio.durationMs, 1))
+                    )
+                    .progressViewStyle(.linear)
+                    HStack {
+                        Text(formatMs(audio.currentMs))
+                        Spacer()
+                        Text(formatMs(audio.durationMs))
+                    }
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+
+                if audio.hasAudio {
+                    Text("Click a timestamp to jump")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            if let err = audio.errorMessage {
+                Text(err)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            } else if !audio.hasAudio {
+                Text("No recording on disk for this meeting (only new recordings are archived).")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var peopleSection: some View {
@@ -488,6 +550,9 @@ struct MeetingDetailView: View {
 
     private func utteranceRow(_ u: Utterance, index: Int) -> some View {
         let color = color(for: u, index: index)
+        let isActive = audio.hasAudio
+            && audio.currentMs >= u.startMs
+            && audio.currentMs < max(u.endMs, u.startMs + 1)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -499,9 +564,20 @@ struct MeetingDetailView: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(color)
                     }
-                    Text(formatMs(u.startMs))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                    Button {
+                        audio.seek(toMs: u.startMs, andPlay: true)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "speaker.wave.2.fill")
+                                .font(.system(size: 9))
+                            Text(formatMs(u.startMs))
+                                .font(.caption2.monospacedDigit())
+                        }
+                        .foregroundStyle(audio.hasAudio ? AnyShapeStyle(color) : AnyShapeStyle(.tertiary))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!audio.hasAudio)
+                    .help(audio.hasAudio ? "Jump to \(formatMs(u.startMs)) in the recording" : "No audio available")
                     if let suggestion = u.suggestedSpeakerLabel, let conf = u.matchConfidence {
                         Text("Maybe \(suggestion) · \(Int((conf * 100).rounded()))%")
                             .font(.caption2)
@@ -522,12 +598,20 @@ struct MeetingDetailView: View {
                         .foregroundStyle(.tertiary)
                         .padding(.leading, 142)
                 } else {
-                    WordTimingFlow(words: u.words)
-                        .padding(.leading, 142)
+                    WordTimingFlow(words: u.words) { ms in
+                        audio.seek(toMs: ms, andPlay: true)
+                    }
+                    .padding(.leading, 142)
+                    .opacity(audio.hasAudio ? 1 : 0.55)
                 }
             }
         }
         .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isActive ? color.opacity(0.08) : .clear)
+        )
     }
 
     private var metaLine: String {
@@ -711,14 +795,16 @@ struct SettingsView: View {
 
 struct WordTimingFlow: View {
     let words: [TimedWord]
+    var onSeek: ((Int) -> Void)?
 
     var body: some View {
-        FlexibleWordWrap(words: words)
+        FlexibleWordWrap(words: words, onSeek: onSeek)
     }
 }
 
 private struct FlexibleWordWrap: View {
     let words: [TimedWord]
+    var onSeek: ((Int) -> Void)?
 
     var body: some View {
         let rows = stride(from: 0, to: words.count, by: 8).map { start in
@@ -728,14 +814,20 @@ private struct FlexibleWordWrap: View {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(alignment: .top, spacing: 8) {
                     ForEach(row) { w in
-                        VStack(spacing: 1) {
-                            Text(w.word)
-                                .font(.caption.monospaced())
-                                .textSelection(.enabled)
-                            Text(formatMs(w.startMs))
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.tertiary)
+                        Button {
+                            onSeek?(w.startMs)
+                        } label: {
+                            VStack(spacing: 1) {
+                                Text(w.word)
+                                    .font(.caption.monospaced())
+                                Text(formatMs(w.startMs))
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .disabled(onSeek == nil)
+                        .help("Jump to \(formatMs(w.startMs))")
                     }
                 }
             }

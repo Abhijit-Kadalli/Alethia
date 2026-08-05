@@ -4,3 +4,7 @@ crisperwhisper[transformers]>=2.0.0
 ctranslate2>=4.5.0
 flask>=3.0.0
 waitress>=3.0.0
+# Real ECAPA-TDNN speaker embeddings (SpeechBrain VoxCeleb).
+speechbrain>=1.0.0
+soundfile>=0.12.0
+torchaudio>=2.1.0
