@@ -55,7 +55,9 @@ struct HubView: View {
     @EnvironmentObject private var model: AppModel
     @State private var query = ""
     @State private var renameDrafts: [UUID: String] = [:]
-    @State private var showOnboarding = true
+    @AppStorage("alethia.didOnboard") private var didOnboard = false
+    @State private var showOnboarding = false
+    @State private var meetingPendingDelete: ConversationSession?
 
     private let speakerColors: [Color] = [
         Color(red: 0.20, green: 0.45, blue: 0.55),
@@ -86,6 +88,16 @@ struct HubView: View {
                                 .foregroundStyle(.tertiary)
                         }
                         .tag(session.id)
+                        .contextMenu {
+                            Button("Delete Meeting", role: .destructive) {
+                                meetingPendingDelete = session
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("Delete", role: .destructive) {
+                                meetingPendingDelete = session
+                            }
+                        }
                     }
                 }
 
@@ -114,13 +126,20 @@ struct HubView: View {
                             model.search(value)
                         }
                     ForEach(model.searchHits) { hit in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(hit.title).font(.headline)
-                            Text(hit.snippet).font(.caption).foregroundStyle(.secondary)
-                            Text(hit.kind.rawValue.uppercased())
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                        Button {
+                            model.openSearchHit(hit)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(hit.title).font(.headline)
+                                Text(hit.snippet).font(.caption).foregroundStyle(.secondary)
+                                Text(hit.kind.rawValue.uppercased())
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -151,19 +170,58 @@ struct HubView: View {
             }
             .navigationSplitViewColumnWidth(min: 280, ideal: 320)
         } detail: {
-            if let meeting = model.selectedMeeting {
-                MeetingDetailView(session: meeting, speakerColors: speakerColors)
-            } else {
-                ContentUnavailableView(
-                    "No meetings yet",
-                    systemImage: "waveform.circle",
-                    description: Text("Start meeting recording from the menu bar. Each meeting’s transcript appears here — toggle Verbatim / Clean in the detail view.")
-                )
+            NavigationStack {
+                if let meeting = model.selectedMeeting {
+                    MeetingDetailView(
+                        session: meeting,
+                        speakerColors: speakerColors,
+                        onDelete: { meetingPendingDelete = meeting }
+                    )
+                } else if model.sessions.isEmpty {
+                    ContentUnavailableView(
+                        "No meetings yet",
+                        systemImage: "waveform.circle",
+                        description: Text("Start meeting recording from the menu bar. Each meeting’s transcript appears here — toggle Verbatim / Clean in the detail view.")
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "Select a meeting",
+                        systemImage: "sidebar.left",
+                        description: Text("Choose a meeting from the sidebar to view its transcript.")
+                    )
+                }
             }
         }
-        .onAppear { model.reload() }
-        .sheet(isPresented: $showOnboarding) {
+        .onAppear {
+            model.reload()
+            if !didOnboard {
+                showOnboarding = true
+            }
+        }
+        .sheet(isPresented: $showOnboarding, onDismiss: {
+            didOnboard = true
+        }) {
             OnboardingView(isPresented: $showOnboarding)
+        }
+        .confirmationDialog(
+            "Delete this meeting?",
+            isPresented: Binding(
+                get: { meetingPendingDelete != nil },
+                set: { if !$0 { meetingPendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Meeting", role: .destructive) {
+                if let id = meetingPendingDelete?.id {
+                    model.deleteMeeting(id)
+                }
+                meetingPendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                meetingPendingDelete = nil
+            }
+        } message: {
+            Text("This cannot be undone.")
         }
     }
 
@@ -180,6 +238,7 @@ struct MeetingDetailView: View {
     @EnvironmentObject private var model: AppModel
     let session: ConversationSession
     let speakerColors: [Color]
+    var onDelete: () -> Void = {}
 
     var body: some View {
         ScrollView {
@@ -258,6 +317,11 @@ struct MeetingDetailView: View {
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toolbar {
+            ToolbarItem(placement: .destructiveAction) {
+                Button("Delete Meeting", role: .destructive, action: onDelete)
+            }
         }
     }
 

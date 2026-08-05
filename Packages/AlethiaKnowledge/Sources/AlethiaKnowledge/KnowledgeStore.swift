@@ -219,6 +219,41 @@ public final class KnowledgeStore: @unchecked Sendable {
         )
     }
 
+    /// Deletes a meeting session, its utterances (CASCADE), FTS rows, and nullifies linked dictations.
+    public func deleteSession(id: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        var utteranceIDs: [UUID] = []
+        try query(
+            "SELECT id FROM utterances WHERE session_id=?;",
+            binder: { bindText($0, 1, id.uuidString) }
+        ) { stmt in
+            if let uuid = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))) {
+                utteranceIDs.append(uuid)
+            }
+        }
+        for uid in utteranceIDs {
+            try exec("DELETE FROM fts_documents WHERE doc_id=?;", binder: { bindText($0, 1, uid.uuidString) })
+        }
+        try exec("DELETE FROM fts_documents WHERE doc_id=?;", binder: { bindText($0, 1, id.uuidString) })
+        try exec(
+            "UPDATE dictations SET session_id=NULL WHERE session_id=?;",
+            binder: { bindText($0, 1, id.uuidString) }
+        )
+        try exec("DELETE FROM sessions WHERE id=?;", binder: { bindText($0, 1, id.uuidString) })
+    }
+
+    public func sessionID(forUtteranceID id: UUID) throws -> UUID? {
+        lock.lock(); defer { lock.unlock() }
+        var found: UUID?
+        try query(
+            "SELECT session_id FROM utterances WHERE id=? LIMIT 1;",
+            binder: { bindText($0, 1, id.uuidString) }
+        ) { stmt in
+            found = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0)))
+        }
+        return found
+    }
+
     public func allSpeakers() throws -> [SpeakerProfile] {
         lock.lock(); defer { lock.unlock() }
         var result: [SpeakerProfile] = []

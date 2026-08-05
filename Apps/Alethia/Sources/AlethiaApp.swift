@@ -325,6 +325,30 @@ final class AppModel: ObservableObject {
         searchHits = (try? store.search(query: query)) ?? []
     }
 
+    func deleteMeeting(_ id: UUID) {
+        do {
+            try store.deleteSession(id: id)
+            if selectedMeetingID == id { selectedMeetingID = nil }
+            reload()
+            statusMessage = "Meeting deleted"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func openSearchHit(_ hit: KnowledgeHit) {
+        switch hit.kind {
+        case .utterance:
+            if let sid = try? store.sessionID(forUtteranceID: hit.id) {
+                selectedMeetingID = sid
+            }
+        case .session:
+            selectedMeetingID = hit.id
+        case .dictation:
+            break
+        }
+    }
+
     func renameSpeaker(_ speaker: SpeakerProfile, to name: String) {
         do {
             try gallery.rename(id: speaker.id, to: name)
