@@ -19,6 +19,11 @@ if [[ ! -x "$ROOT/Tools/crisperwhisper_sidecar/.venv/bin/python" ]] \
   "$ROOT/Scripts/setup-crisperwhisper.sh"
 fi
 
+# Prefer LaunchAgent keep-alive so ASR doesn't die between sessions.
+if [[ -x "$ROOT/Scripts/install-crisper-launchagent.sh" ]]; then
+  "$ROOT/Scripts/install-crisper-launchagent.sh" || true
+fi
+
 swift build -c "$CONFIG"
 
 BIN="$ROOT/.build/$CONFIG/Alethia"

@@ -1,4 +1,6 @@
-# Apple Silicon / macOS: transformers backend (ct2 wheels are Linux x86_64 only).
+# Apple Silicon / macOS: transformers backend (ct2-crisperwhisper wheels are Linux-only).
+# Upstream ctranslate2 is still needed — hallucination.py imports it even on transformers.
 crisperwhisper[transformers]>=2.0.0
+ctranslate2>=4.5.0
 flask>=3.0.0
 waitress>=3.0.0

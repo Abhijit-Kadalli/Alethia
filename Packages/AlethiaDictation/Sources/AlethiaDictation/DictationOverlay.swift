@@ -1,22 +1,29 @@
 import AppKit
 import SwiftUI
 
-/// Floating waveform panel shown while dictation is active.
+public enum DictationOverlayPhase: String, Sendable {
+    case listening
+    case transcribing
+}
+
+/// Floating waveform panel shown while dictation / transcription is active.
 @MainActor
 public final class DictationOverlayController: ObservableObject {
     @Published public var level: Float = 0
     @Published public var isVisible = false
+    @Published public var phase: DictationOverlayPhase = .listening
 
     private var panel: NSPanel?
 
     public init() {}
 
-    public func show() {
+    public func show(phase: DictationOverlayPhase = .listening) {
+        self.phase = phase
         isVisible = true
         if panel == nil {
             let root = NSHostingController(rootView: DictationOverlayView(controller: self))
             let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 280, height: 72),
+                contentRect: NSRect(x: 0, y: 0, width: 300, height: 72),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -34,13 +41,27 @@ public final class DictationOverlayController: ObservableObject {
         panel?.orderFrontRegardless()
     }
 
+    public func setPhase(_ phase: DictationOverlayPhase) {
+        self.phase = phase
+        if phase == .transcribing {
+            level = 0
+        }
+        if isVisible {
+            panel?.orderFrontRegardless()
+        } else {
+            show(phase: phase)
+        }
+    }
+
     public func hide() {
         isVisible = false
+        phase = .listening
         panel?.orderOut(nil)
         level = 0
     }
 
     public func updateLevel(_ rms: Float) {
+        guard phase == .listening else { return }
         level = min(max(rms * 8, 0), 1)
     }
 
@@ -61,16 +82,24 @@ struct DictationOverlayView: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Circle()
-                .fill(Color.red.opacity(0.85))
-                .frame(width: 10, height: 10)
-            Text("Dictating")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-            WaveformBars(level: controller.level)
-                .frame(width: 120, height: 28)
+            if controller.phase == .transcribing {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Transcribing…")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+            } else {
+                Circle()
+                    .fill(Color.red.opacity(0.85))
+                    .frame(width: 10, height: 10)
+                Text("Dictating")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                WaveformBars(level: controller.level)
+                    .frame(width: 120, height: 28)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
+        .frame(minWidth: 220)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)

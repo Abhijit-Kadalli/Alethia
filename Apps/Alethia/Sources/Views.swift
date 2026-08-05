@@ -22,10 +22,15 @@ struct MenuBarView: View {
             }
             .disabled(model.isTranscribingMeeting)
 
-            if model.isDictating {
+            if model.isTranscribingDictation {
+                Text("Transcribing…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if model.isDictating {
                 Button("Finish Dictation") { model.endDictation() }
             } else {
                 Button("Start Dictation") { model.beginDictation() }
+                    .disabled(model.isTranscribingMeeting)
             }
 
             Toggle("Include system audio", isOn: $model.includeSystemAudio)

@@ -93,10 +93,10 @@ public struct CrisperWhisperRecognizer: SpeechRecognizing {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return false }
-            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let ok = obj["ok"] as? Bool {
-                return ok
-            }
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ok = obj["ok"] as? Bool, ok else { return false }
+            if let stub = obj["stub"] as? Bool, stub { return false }
+            if let loaded = obj["loaded"] as? Bool { return loaded }
             return true
         } catch {
             return false
@@ -193,18 +193,35 @@ public enum CrisperSidecarLauncher {
         guard let script = resolveStartScript(fileManager: fileManager) else {
             return false
         }
+        let logURL: URL = {
+            if let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+                let dir = support.appendingPathComponent("Alethia", isDirectory: true)
+                try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+                return dir.appendingPathComponent("crisper-sidecar.log")
+            }
+            return URL(fileURLWithPath: "/tmp/crisper-sidecar.log")
+        }()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [script.path]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        if let handle = try? FileHandle(forWritingTo: {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            return logURL
+        }()) {
+            process.standardOutput = handle
+            process.standardError = handle
+        } else {
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+        }
         do {
             try process.run()
         } catch {
             return false
         }
-        for _ in 0..<40 {
-            try? await Task.sleep(nanoseconds: 250_000_000)
+        // Model load can take ~15–60s the first time.
+        for _ in 0..<120 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
             if await CrisperWhisperRecognizer.isHealthy(baseURL: configuration.baseURL) {
                 return true
             }

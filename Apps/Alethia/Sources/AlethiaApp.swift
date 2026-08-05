@@ -122,6 +122,7 @@ final class AppModel: ObservableObject {
     @Published var searchHits: [KnowledgeHit] = []
     @Published var statusMessage: String = "Ready"
     @Published var isDictating = false
+    @Published var isTranscribingDictation = false
     @Published var includeSystemAudio = true
     @Published var isTranscribingMeeting = false
 
@@ -137,8 +138,8 @@ final class AppModel: ObservableObject {
     let overlay = DictationOverlayController()
 
     var menuBarSymbol: String {
+        if isTranscribingDictation || isTranscribingMeeting { return "hourglass" }
         if isDictating { return "mic.fill" }
-        if isTranscribingMeeting { return "hourglass" }
         switch recordingState {
         case .recording: return "record.circle.fill"
         case .stopped: return "waveform.circle"
@@ -237,13 +238,21 @@ final class AppModel: ObservableObject {
             do {
                 guard !isDictating else { return }
                 try await permissions.requireMicrophone()
+                if !(await CrisperWhisperRecognizer.isHealthy()) {
+                    statusMessage = "Starting ASR…"
+                    let up = await CrisperSidecarLauncher.ensureRunning()
+                    guard up else {
+                        statusMessage = "ASR offline — run ./Scripts/run-app.sh"
+                        return
+                    }
+                }
                 // Prefer shared meeting stream; otherwise start mic-only capture.
                 if recordingState != .recording, !dictationMic.isRunning {
                     try dictationMic.start()
                 }
                 try dictation.begin()
                 isDictating = true
-                overlay.show()
+                overlay.show(phase: .listening)
                 statusMessage = "Dictating… speak, then release Fn (or Finish)"
             } catch {
                 isDictating = false
@@ -259,27 +268,32 @@ final class AppModel: ObservableObject {
     func endDictation() {
         Task {
             guard isDictating || dictation.isDictating else { return }
+            // Stop accepting new mic frames, but keep overlay while ASR runs.
+            isDictating = false
+            isTranscribingDictation = true
+            overlay.setPhase(.transcribing)
+            statusMessage = "Transcribing…"
+            if recordingState != .recording {
+                dictationMic.stop()
+            }
             do {
+                if !(await CrisperWhisperRecognizer.isHealthy()) {
+                    _ = await CrisperSidecarLauncher.ensureRunning()
+                }
                 let event = try await dictation.end(
                     targetBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 )
-                isDictating = false
+                isTranscribingDictation = false
                 overlay.hide()
-                if recordingState != .recording {
-                    dictationMic.stop()
-                }
                 if dictation.lastPasteNeedsManual {
-                    statusMessage = "Transcribed (clipboard). Press ⌘V — enable Accessibility for auto-paste. “\(event.text.prefix(48))”"
+                    statusMessage = "Copied — press ⌘V (enable Accessibility for auto-paste): “\(event.text.prefix(48))”"
                 } else {
-                    statusMessage = "Dictation saved: \(event.text.prefix(64))"
+                    statusMessage = "Dictated: \(event.text.prefix(64))"
                 }
                 reload()
             } catch {
-                isDictating = false
+                isTranscribingDictation = false
                 overlay.hide()
-                if recordingState != .recording {
-                    dictationMic.stop()
-                }
                 statusMessage = error.localizedDescription
             }
         }
