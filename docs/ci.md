@@ -1,21 +1,20 @@
-# Continuous integration
-
-Alethia uses two GitHub Actions workflows:
+# CI
 
 ## `dsp-reference` (Ubuntu)
 
-Runs the Python signal-processing reference under `Tools/dsp_reference`.
-Validates DSP/VAD heuristics that mirror the Swift front-end.
+Runs Python DSP/VAD reference tests under `Tools/dsp_reference`.
 
 ## `darwin` (macOS 14)
 
-Runs on Apple Silicon GitHub-hosted runners:
+1. `Scripts/setup-crisperwhisper.sh` — create sidecar venv + install `crisperwhisper[transformers]`
+2. Start sidecar with `ALETHIA_CRISPER_STUB=1` (no large model download in CI)
+3. `swift build --build-tests` / `swift test --parallel`
+4. Smoke `POST /transcribe` against `Fixtures/speech_short.wav`
 
-1. `Scripts/setup-whisper-darwin.sh` — clone/build whisper.cpp with Metal, fetch `ggml-tiny.bin` (cached)
-2. `swift build --build-tests`
-3. `swift test --parallel`
-4. Smoke `whisper-cli` against `Fixtures/speech_short.wav`
+Local mirror:
 
-Headless runners do **not** exercise live microphone, Accessibility paste, or ScreenCaptureKit permission prompts. Those remain manual checks on a physical Mac.
-
-PRs that change `Packages/**`, `Apps/**`, or `Package.swift` should stay green on **darwin**.
+```bash
+./Scripts/setup-crisperwhisper.sh
+ALETHIA_CRISPER_STUB=1 ./Scripts/start-crisper-sidecar.sh &
+swift test --parallel
+```

@@ -2,75 +2,49 @@
 
 ## Sample rate and format
 
-Everything downstream of capture is **16 kHz mono Float32** (whisper/ECAPA native rate). Capture may run at device rate and resample with `AVAudioConverter`.
+Everything downstream of capture is **16 kHz mono Float32** (CrisperWhisper / ECAPA native rate). Capture may run at device rate and resample with a linear resampler (or `AVAudioConverter` later).
 
 ## Stage 1 — Capture
 
-- Microphone via `AVAudioEngine` input tap (primary).
-- Optional system audio via `ScreenCaptureKit` audio stream (meetings without a bot).
-- Mixed to a single mono ring buffer (~30–60 s capacity for late binding).
+Two explicit modes:
 
-## Stage 2 — Classical DSP (always on)
+- **Meeting** — `MeetingRecorder` starts `MixedAudioCapture` (mic + optional ScreenCaptureKit system audio) and appends PCM until stop.
+- **Dictation** — `DictationMicCapture` (mic only) while Fn is held, unless a meeting is already streaming (shared `onPCM`).
 
-Per 20–30 ms frame (see [`dsp_vad_redesign.md`](dsp_vad_redesign.md)):
+## Stage 2 — Classical DSP / VAD (library)
 
-| Feature | Use |
-|---------|-----|
-| RMS + adaptive floor | High-recall energy gate only |
-| Bin-wise spectral flatness (Hann) | Structure for speech probability |
-| Speech band 85–5500 Hz | Structure + rumble reject |
-| Zero-crossing rate | Unvoiced / fricative boost |
-
-`ClassicalSpeechScorer` produces `probability` + `energyPassed`. Failed energy caps `p` at 0.2 in `VADGate`.
+Per-frame DSP + VAD utilities remain in `AlethiaAudio` for tests and optional future silence trimming. They are **not** used to auto-open ambient conversations.
 
 Python reference: [`Tools/dsp_reference`](../Tools/dsp_reference).
 
-## Stage 3 — Speech probability + hysteresis
+## Stage 3 — ASR (CrisperWhisper sidecar)
 
-Default: classical scorer (Silero protocol-ready later). Hysteresis:
+On dictation release or meeting stop:
 
-- Open speech when `p ≥ 0.5` for ≥150 ms
-- Close speech when `p ≤ 0.35` for ≥500 ms
+- Encode PCM as WAV
+- `POST` to local sidecar `http://127.0.0.1:8765/transcribe`
+- Dictation uses `mode=intended`; meetings use `mode=verbatim`
+- Map JSON segments → `TranscriptSegment`
 
-## Stage 4 — Conversation segmenter
+Sidecar setup: `Scripts/setup-crisperwhisper.sh` / `Scripts/start-crisper-sidecar.sh`.
 
-A **conversation** opens when sustained speech exceeds a usefulness bar:
-
-- ≥ 2 s cumulative speech within a 8 s window, **or**
-- ≥ 1.5 s continuous speech with high VAD confidence
-
-It closes after ~4–6 s of silence (configurable) once minimum content exists.
-
-Short bursts (coughs, “hey”) are discarded and never create sessions.
-
-## Stage 5 — ASR (whisper.cpp)
-
-On conversation close (and optionally mid-conversation chunks):
-
-- Run whisper on speech-only PCM (silence already stripped)
-- Prefer Metal GPU + Core ML encoder on Apple Silicon
-- Emit segments with start/end timestamps
-
-Dictation mode uses the same ASR path on the hotkey-gated buffer.
-
-## Stage 6 — Diarization
+## Stage 4 — Diarization (meetings)
 
 For each ASR utterance window (or fixed 1.5–3 s speech windows):
 
-1. Compute 192-dim ECAPA-TDNN embedding
+1. Compute 192-dim ECAPA-TDNN embedding (spectral fallback until GGML weights land)
 2. Cluster embeddings within the session (agglomerative, cosine linkage)
-3. Match cluster centroids to the **speaker gallery** (cosine ≥ threshold → known name; else `Speaker N`)
+3. Match cluster centroids to the **speaker gallery**
 4. User rename → update gallery centroid (EMA) and rewrite labels
 
-## Stage 7 — Persist
+## Stage 5 — Persist
 
 Write session + utterances (+ dictation rows) into SQLite / FTS5. Optional short audio retention is off by default; transcripts are kept.
 
-## Latency budget (ambient)
+## Latency budget
 
 | Stage | Target |
 |-------|--------|
-| DSP + VAD | &lt; 5 ms / frame |
-| Segment close → ASR start | immediate |
-| ASR RTF on M-series turbo | ≪ 1.0 |
-| Diarization per minute speech | seconds, offline to UI |
+| Dictation hold → release | mic buffer only |
+| Sidecar RTF on M-series turbo | ≪ 1.0 after warm model |
+| Meeting stop → saved session | ASR + diarization of full buffer |

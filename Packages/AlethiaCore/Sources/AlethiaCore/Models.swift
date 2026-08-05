@@ -13,7 +13,7 @@ public struct ConversationSession: Identifiable, Codable, Sendable, Hashable {
         title: String? = nil,
         startedAt: Date = Date(),
         endedAt: Date? = nil,
-        source: CaptureSource = .ambient,
+        source: CaptureSource = .meeting,
         utterances: [Utterance] = []
     ) {
         self.id = id
@@ -26,9 +26,11 @@ public struct ConversationSession: Identifiable, Codable, Sendable, Hashable {
 }
 
 public enum CaptureSource: String, Codable, Sendable {
-    case ambient
+    case meeting
     case dictation
     case mixed
+    /// Legacy rows from always-on ambient; treated like meeting in the UI.
+    case ambient
 }
 
 public struct Utterance: Identifiable, Codable, Sendable, Hashable {
@@ -130,9 +132,9 @@ public enum AlethiaError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .microphonePermissionDenied:
-            return "Microphone access is required for ambient listening and dictation."
+            return "Microphone access is required for meeting recording and dictation."
         case .accessibilityPermissionDenied:
-            return "Accessibility access is required to type dictated text into other apps."
+            return "Enable Alethia in System Settings → Privacy & Security → Accessibility (use ~/Applications/Alethia.app), then Quit and relaunch."
         case .modelMissing(let name):
             return "Required model is missing: \(name). Run Scripts/download-models.sh."
         case .database(let message):

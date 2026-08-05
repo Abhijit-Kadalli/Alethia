@@ -224,7 +224,7 @@ public final class KnowledgeStore: @unchecked Sendable {
             let ended: Date? = sqlite3_column_type(stmt, 3) == SQLITE_NULL
                 ? nil
                 : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
-            let source = CaptureSource(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .ambient
+            let source = CaptureSource(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .meeting
             sessions.append(ConversationSession(id: id, title: title, startedAt: started, endedAt: ended, source: source))
         }
         return sessions

@@ -1,42 +1,26 @@
 # Privacy
 
-Alethia is designed to keep **all audio and transcripts on your Mac**.
+Alethia is designed to keep conversation audio and transcripts on your Mac.
 
-## What stays local
+## Principles
 
-- Microphone and system-audio buffers
-- Whisper / VAD / speaker-embedding inference
-- SQLite knowledge base (sessions, utterances, speakers, dictations)
-- Speaker gallery embeddings and display names
+- No cloud ASR or analytics by default.
+- No meeting bot joins calls; system audio uses ScreenCaptureKit when enabled.
+- Meeting recording shows a visible menu-bar indicator.
+- Meeting capture runs only while you have started recording.
+- Dictation only runs while the Fn session is active.
+- You are responsible for obtaining consent when recording others.
 
-No cloud account is required for v1. No analytics of conversation content.
-
-## Indicators and control
-
-- Ambient listening shows a visible menu-bar indicator.
-- Ambient can be paused or stopped at any time.
-- Dictation only runs while the hotkey session is active.
-- Users can delete sessions, dictations, or the entire local database.
-
-## Consent and legality
-
-Recording conversations may require consent depending on jurisdiction, workplace policy, and context. Alethia shows an onboarding reminder but **does not** replace your legal obligations. When in doubt, ask before recording.
-
-## Permissions (macOS)
+## Permissions
 
 | Permission | Why |
 |------------|-----|
-| Microphone | Ambient + dictation capture |
-| Accessibility | Insert dictated text into other apps |
-| Screen Recording / System Audio | Capture meeting audio without a bot (macOS 14.4+) |
+| Microphone | Meeting + dictation capture |
+| Accessibility | Global Fn monitoring + auto-paste into other apps |
+| Screen Recording | Optional system audio for meetings |
 
-## Data retention defaults
+## Data at rest
 
-- Transcripts and metadata: kept until the user deletes them
-- Raw audio clips: **not retained by default** (optional short TTL can be enabled later)
-- Models: stored under `Models/` / Application Support; never uploaded by Alethia
+SQLite knowledge store under Application Support. Model weights for CrisperWhisper live in the Hugging Face cache used by the local sidecar; optional ECAPA weights under `Models/`.
 
-## Security notes
-
-- Database lives in the app sandbox / Application Support
-- No network calls are required for core features; model download is an explicit user action via `Scripts/download-models.sh` or first-run UI
+See also [architecture.md](architecture.md).

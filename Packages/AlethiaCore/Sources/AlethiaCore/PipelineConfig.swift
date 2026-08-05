@@ -1,11 +1,9 @@
 import Foundation
 
-/// Coordinates ambient listening lifecycle at the domain level (UI-agnostic).
-public enum AmbientState: String, Codable, Sendable {
+/// Explicit meeting / dictation recording lifecycle (UI-agnostic).
+public enum RecordingState: String, Codable, Sendable {
     case stopped
-    case listening
-    case inConversation
-    case paused
+    case recording
 }
 
 public struct PipelineConfig: Codable, Sendable {

@@ -1,0 +1,4 @@
+# Apple Silicon / macOS: transformers backend (ct2 wheels are Linux x86_64 only).
+crisperwhisper[transformers]>=2.0.0
+flask>=3.0.0
+waitress>=3.0.0

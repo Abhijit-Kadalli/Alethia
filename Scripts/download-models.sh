@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download local inference weights for Alethia (run on your Mac).
+# Download / note local inference weights for Alethia (run on your Mac).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,26 +9,10 @@ mkdir -p "$MODELS"
 echo "Alethia model download"
 echo "Weights are gitignored. Place files under: $MODELS"
 echo
-
-download() {
-  local url="$1"
-  local out="$2"
-  if [[ -f "$out" ]]; then
-    echo "exists: $out"
-    return
-  fi
-  echo "fetch: $out"
-  curl -L --fail --progress-bar -o "$out" "$url"
-}
-
-# Tiny model — used by Darwin CI smoke tests (fast)
-download \
-  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" \
-  "$MODELS/ggml-tiny.bin"
-
-# Whisper.cpp ggml (large-v3-turbo quantized) for higher quality local ASR
-WHISPER_URL="${WHISPER_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin}"
-download "$WHISPER_URL" "$MODELS/ggml-large-v3-turbo-q5_0.bin"
+echo "CrisperWhisper models are downloaded automatically by the sidecar"
+echo "into the Hugging Face cache on first transcription (default size: turbo)."
+echo "Setup the sidecar with: ./Scripts/setup-crisperwhisper.sh"
+echo
 
 # Placeholder note for ECAPA weights (optional until native GGML runner lands)
 if [[ ! -f "$MODELS/ggml-speaker-ecapa-tdnn.bin" ]]; then
@@ -43,12 +27,11 @@ Downloaded weights live here and are gitignored.
 
 Expected files (v1):
 
-- `ggml-tiny.bin` — fast ASR for CI / smoke
-- `ggml-large-v3-turbo-q5_0.bin` — higher-quality whisper.cpp ASR
+- CrisperWhisper — managed by the Python sidecar (HF cache); default size `turbo`
 - `ggml-silero-*.bin` — Silero VAD (optional; energy VAD stub works)
 - `ggml-speaker-ecapa-tdnn.bin` — speaker embeddings (optional; spectral fallback)
 
-Also run `Scripts/setup-whisper-darwin.sh` on macOS to build the Metal whisper-cli.
+Run `Scripts/setup-crisperwhisper.sh` on macOS, then `Scripts/start-crisper-sidecar.sh`.
 EOF
 
 echo

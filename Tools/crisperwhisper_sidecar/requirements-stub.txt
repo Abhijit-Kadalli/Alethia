@@ -1,0 +1,3 @@
+# Minimal deps for ALETHIA_CRISPER_STUB=1 (CI / offline smoke).
+flask>=3.0.0
+waitress>=3.0.0

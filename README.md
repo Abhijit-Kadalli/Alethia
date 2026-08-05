@@ -1,11 +1,11 @@
 # Alethia
 
-**Fully local** macOS app for ambient conversation capture and speak-to-type dictation — with speaker diarization, persistent speaker naming, and an on-device knowledge base.
+**Fully local** macOS app for meeting transcripts and speak-to-type dictation — with speaker diarization, persistent speaker naming, and an on-device knowledge base.
 
 Alethia combines:
 
-- **Ambient mode** (Granola-like) — microphone (+ optional system audio) always on; DSP + VAD detects useful speech; conversations are segmented, diarized, and stored locally.
-- **Dictation mode** (Wispr-like) — hold **Right Option**, speak, text is typed into the focused app; every dictation is also stored. Floating waveform overlay while active.
+- **Meeting mode** (Granola-like) — click **Start Meeting Recording** in the menu bar; mic (+ optional system audio) records until you stop; audio is transcribed with CrisperWhisper, diarized, and stored locally.
+- **Dictation mode** (Wispr-like) — hold **Fn**, speak, text is typed into the focused app; every dictation is also stored. Floating waveform overlay while active.
 - **Knowledge** — transcripts, speakers, and dictations accumulate into a searchable local archive. Rename speakers over time.
 
 Nothing leaves your Mac. No cloud ASR. No bot joins your meetings.
@@ -19,21 +19,21 @@ CI:
 | Workflow | Runner | Purpose |
 |----------|--------|---------|
 | `dsp-reference` | Ubuntu | Python DSP/VAD reference tests |
-| `darwin` | **macOS 14** | `swift build` / `swift test` + whisper.cpp smoke |
+| `darwin` | **macOS 14** | `swift build` / `swift test` + CrisperWhisper sidecar smoke |
 
 ## Architecture (high level)
 
 ```
-Mic / System Audio ──► DSP + VAD ──► Conversation segments
-                                         │
-                    ┌────────────────────┼────────────────────┐
-                    ▼                    ▼                    ▼
-              whisper.cpp          ECAPA / spectral     Dictation paste
-              (Metal CLI)          embeddings           (Accessibility)
-                    │                    │                    │
-                    └────────────► SQLite knowledge ◄─────────┘
-                                         │
-                                  Hub search / timeline
+Mic / System Audio ──► Meeting buffer (while recording)
+                              │
+Fn hold ──► Dictation buffer ─┤
+                              ▼
+                    CrisperWhisper sidecar
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+         Diarization     Dictation paste   Knowledge
+         (meetings)      (Accessibility)   (SQLite)
 ```
 
 See [docs/architecture.md](docs/architecture.md) and [docs/pipeline.md](docs/pipeline.md).
@@ -44,13 +44,15 @@ See [docs/architecture.md](docs/architecture.md) and [docs/pipeline.md](docs/pip
 Apps/Alethia/           SwiftUI menu-bar app + Hub
 Packages/
   AlethiaCore/          Shared models and permissions
-  AlethiaAudio/         Capture, DSP, VAD, system audio, segmenter
-  AlethiaASR/           whisper.cpp CLI bridge
+  AlethiaAudio/         Capture, DSP, VAD, system audio, meeting recorder
+  AlethiaASR/           CrisperWhisper sidecar client
   AlethiaDiarization/   Embeddings, clustering, gallery
-  AlethiaDictation/     Hotkey, overlay, Accessibility typing
+  AlethiaDictation/     Hotkey (Fn), overlay, Accessibility typing
   AlethiaKnowledge/     SQLite store + FTS5 search
-Tools/dsp_reference/    Python DSP/VAD reference
-Scripts/                Model + whisper.cpp Darwin setup
+Tools/
+  crisperwhisper_sidecar/  Local Python ASR HTTP server
+  dsp_reference/           Python DSP/VAD reference
+Scripts/                Sidecar setup + app packaging
 Fixtures/               Short WAV for CI smoke
 .github/workflows/      dsp-reference.yml + darwin.yml
 ```
@@ -59,8 +61,9 @@ Fixtures/               Short WAV for CI smoke
 
 - Apple Silicon Mac, macOS 14+
 - Xcode 15+ / Swift 5.9+
+- Python 3.10+ (CrisperWhisper sidecar)
 - Microphone permission
-- Accessibility permission (dictation paste)
+- Accessibility permission (dictation paste + global Fn)
 - Screen Recording (system audio for meetings, macOS 14.4+)
 
 ## Quick start (Mac)
@@ -68,13 +71,13 @@ Fixtures/               Short WAV for CI smoke
 ```bash
 git clone https://github.com/Abhijit-Kadalli/Alethia.git
 cd Alethia
-./Scripts/setup-whisper-darwin.sh   # builds whisper.cpp + tiny model
-./Scripts/download-models.sh        # optional larger turbo model
-swift test                          # same checks as Darwin CI
-swift run Alethia                   # or open Package.swift in Xcode
+./Scripts/setup-crisperwhisper.sh   # Python venv + CrisperWhisper
+./Scripts/start-crisper-sidecar.sh  # leave running (or use run-app.sh)
+swift test                          # same checks as Darwin CI (stub sidecar in CI)
+./Scripts/run-app.sh                # package, start sidecar, launch app
 ```
 
-Grant permissions when prompted. Menu bar: start ambient. Hold Right Option to dictate.
+Grant permissions when prompted. Menu bar: start meeting recording. Hold **Fn** to dictate.
 
 ## CI locally
 
@@ -84,13 +87,14 @@ cd Tools/dsp_reference && python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pytest -q
 
 # macOS — mirrors GitHub Actions darwin job
-./Scripts/setup-whisper-darwin.sh
+./Scripts/setup-crisperwhisper.sh
+ALETHIA_CRISPER_STUB=1 ./Scripts/start-crisper-sidecar.sh &
 swift test --parallel
 ```
 
 ## Privacy
 
-All audio and transcripts stay on device. Ambient listening shows a menu-bar indicator. You are responsible for obtaining consent when recording others. See [docs/privacy.md](docs/privacy.md).
+All audio and transcripts stay on device. Meeting recording shows a visible menu-bar indicator. You are responsible for obtaining consent when recording others. See [docs/privacy.md](docs/privacy.md).
 
 ## License
 

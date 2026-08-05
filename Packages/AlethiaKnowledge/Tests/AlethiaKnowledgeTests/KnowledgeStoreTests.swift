@@ -20,7 +20,7 @@ final class KnowledgeStoreTests: XCTestCase {
         )
         let session = ConversationSession(
             title: "Planning",
-            source: .ambient,
+            source: .meeting,
             utterances: [utterance]
         )
         try store.saveSession(session)

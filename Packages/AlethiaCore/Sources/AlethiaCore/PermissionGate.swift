@@ -1,4 +1,5 @@
 import AVFoundation
+import AppKit
 import ApplicationServices
 import Foundation
 
@@ -26,8 +27,22 @@ public final class PermissionGate: @unchecked Sendable {
     }
 
     public func accessibilityTrusted(prompt: Bool = false) -> Bool {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt] as CFDictionary
+        // Prefer the non-prompting check first; prompting every call spams the user.
+        if AXIsProcessTrusted() { return true }
+        guard prompt else { return false }
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
+    }
+
+    public func openAccessibilitySettings() {
+        // macOS 13+ Settings deep link; fall back to legacy pane.
+        let candidates = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+        ]
+        for raw in candidates {
+            if let url = URL(string: raw), NSWorkspace.shared.open(url) { return }
+        }
     }
 
     public func requireMicrophone() async throws {
@@ -43,8 +58,11 @@ public final class PermissionGate: @unchecked Sendable {
     }
 
     public func requireAccessibility(prompt: Bool = true) throws {
-        guard accessibilityTrusted(prompt: prompt) else {
-            throw AlethiaError.accessibilityPermissionDenied
+        if accessibilityTrusted(prompt: false) { return }
+        if prompt {
+            _ = accessibilityTrusted(prompt: true)
+            openAccessibilitySettings()
         }
+        throw AlethiaError.accessibilityPermissionDenied
     }
 }

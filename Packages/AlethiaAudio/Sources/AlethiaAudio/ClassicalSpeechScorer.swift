@@ -95,5 +95,5 @@ public extension SpeechProbabilityModel {
     }
 }
 
-/// Backward-compatible name used by AmbientPipeline defaults.
+/// Backward-compatible name used by pipeline defaults.
 public typealias EnergyVADStub = ClassicalSpeechScorer

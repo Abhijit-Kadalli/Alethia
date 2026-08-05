@@ -11,14 +11,16 @@ struct MenuBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
-            Button(model.ambientState == .stopped || model.ambientState == .paused
-                   ? "Start Ambient Listening"
-                   : "Stop Ambient Listening") {
-                model.toggleAmbient()
+            Button(model.recordingState == .stopped
+                   ? "Start Meeting Recording"
+                   : "Stop Meeting Recording") {
+                model.toggleMeetingRecording()
             }
+            .disabled(model.isTranscribingMeeting)
 
             if model.isDictating {
                 Button("Finish Dictation") { model.endDictation() }
@@ -27,11 +29,15 @@ struct MenuBarView: View {
             }
 
             Toggle("Include system audio", isOn: $model.includeSystemAudio)
+                .disabled(model.recordingState == .recording)
 
             Divider()
 
             Button("Open Hub") {
                 NotificationCenter.default.post(name: .alethiaOpenHub, object: nil)
+            }
+            Button("Open Accessibility Settings") {
+                model.permissions.openAccessibilitySettings()
             }
             Button("Quit Alethia") { NSApplication.shared.terminate(nil) }
         }
@@ -91,7 +97,7 @@ struct HubView: View {
                         }
                     }
                     if model.speakers.isEmpty {
-                        Text("Speakers appear after ambient conversations.")
+                        Text("Speakers appear after meeting recordings.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -102,13 +108,13 @@ struct HubView: View {
             List(model.sessions) { session in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text(session.title ?? "Conversation").font(.headline)
+                        Text(session.title ?? "Meeting").font(.headline)
                         Spacer()
                         Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Text(session.source.rawValue.uppercased())
+                    Text(displaySource(session.source))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     ForEach(Array(session.utterances.enumerated()), id: \.element.id) { idx, u in
@@ -126,9 +132,9 @@ struct HubView: View {
             .overlay {
                 if model.sessions.isEmpty {
                     ContentUnavailableView(
-                        "No conversations yet",
-                        systemImage: "ear",
-                        description: Text("Start ambient listening from the menu bar. Hold Right Option to dictate.")
+                        "No meetings yet",
+                        systemImage: "waveform.circle",
+                        description: Text("Start meeting recording from the menu bar. Hold Fn to dictate.")
                     )
                 }
             }
@@ -136,6 +142,15 @@ struct HubView: View {
         .onAppear { model.reload() }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView(isPresented: $showOnboarding)
+        }
+    }
+
+    private func displaySource(_ source: CaptureSource) -> String {
+        switch source {
+        case .ambient: return "MEETING"
+        case .meeting: return "MEETING"
+        case .mixed: return "MEETING + SYSTEM"
+        case .dictation: return "DICTATION"
         }
     }
 }
@@ -147,11 +162,13 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Welcome to Alethia")
                 .font(.title.weight(.semibold))
-            Text("Fully local ambient capture + speak-to-type. Audio and transcripts stay on your Mac.")
+            Text("Fully local meeting transcripts + speak-to-type. Audio and transcripts stay on your Mac.")
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
-                Label("Microphone — ambient conversations & dictation", systemImage: "mic")
-                Label("Accessibility — type dictated text into other apps", systemImage: "keyboard")
+                Label("Hold Fn — dictate into any app", systemImage: "keyboard")
+                Label("Menu bar — start/stop meeting recording", systemImage: "record.circle")
+                Label("Microphone — meetings & dictation", systemImage: "mic")
+                Label("Accessibility — auto-paste dictated text", systemImage: "accessibility")
                 Label("Screen Recording — optional system audio for meetings", systemImage: "rectangle.dashed.badge.record")
             }
             Text("Recording others may require consent. You are responsible for following local law and policy.")

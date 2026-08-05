@@ -3,6 +3,14 @@ import AlethiaCore
 
 public protocol SpeechRecognizing: Sendable {
     func transcribe(pcm: [Float], sampleRate: Double) async throws -> [TranscriptSegment]
+    func transcribe(pcm: [Float], sampleRate: Double, mode: ASRMode) async throws -> [TranscriptSegment]
+}
+
+public extension SpeechRecognizing {
+    func transcribe(pcm: [Float], sampleRate: Double, mode: ASRMode) async throws -> [TranscriptSegment] {
+        // Default: ignore mode (stubs / legacy).
+        try await transcribe(pcm: pcm, sampleRate: sampleRate)
+    }
 }
 
 public struct TranscriptSegment: Sendable, Hashable {
@@ -17,7 +25,7 @@ public struct TranscriptSegment: Sendable, Hashable {
     }
 }
 
-/// Offline stub used when whisper.cpp is not installed.
+/// Offline stub used when CrisperWhisper sidecar is not installed.
 public struct WhisperStubRecognizer: SpeechRecognizing {
     public init() {}
 
@@ -28,7 +36,7 @@ public struct WhisperStubRecognizer: SpeechRecognizing {
             TranscriptSegment(
                 startMs: 0,
                 endMs: durationMs,
-                text: "[local whisper pending — run Scripts/setup-whisper-darwin.sh]"
+                text: "[local crisperwhisper pending — run Scripts/setup-crisperwhisper.sh]"
             )
         ]
     }
@@ -41,7 +49,11 @@ public final class ASRService: Sendable {
         self.recognizer = recognizer ?? ASRFactory.makeDefault()
     }
 
-    public func transcribe(pcm: [Float], sampleRate: Double = 16_000) async throws -> [TranscriptSegment] {
-        try await recognizer.transcribe(pcm: pcm, sampleRate: sampleRate)
+    public func transcribe(
+        pcm: [Float],
+        sampleRate: Double = 16_000,
+        mode: ASRMode = .intended
+    ) async throws -> [TranscriptSegment] {
+        try await recognizer.transcribe(pcm: pcm, sampleRate: sampleRate, mode: mode)
     }
 }

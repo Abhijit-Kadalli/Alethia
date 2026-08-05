@@ -21,7 +21,6 @@ struct AlethiaApp: App {
         MenuBarExtra("Alethia", systemImage: appModel.menuBarSymbol) {
             MenuBarView()
                 .environmentObject(appModel)
-                // Keep an openWindow handle alive; `.menu` style often drops the environment.
                 .background(OpenWindowRegistrar())
         }
         .menuBarExtraStyle(.window)
@@ -54,7 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleOpenHub() {
-        // Accessory apps can't reliably become key; flip to regular while Hub is visible.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         openWindow?(id: "hub")
@@ -96,7 +94,6 @@ private struct OpenWindowRegistrar: View {
             .accessibilityHidden(true)
             .onAppear { AppDelegate.shared?.openWindow = openWindow }
             .task {
-                // Re-register after scene updates; MenuBarExtra can recreate content.
                 AppDelegate.shared?.openWindow = openWindow
             }
     }
@@ -119,16 +116,18 @@ private struct HubWindowLifecycle: View {
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var ambientState: AmbientState = .stopped
+    @Published var recordingState: RecordingState = .stopped
     @Published var sessions: [ConversationSession] = []
     @Published var speakers: [SpeakerProfile] = []
     @Published var searchHits: [KnowledgeHit] = []
     @Published var statusMessage: String = "Ready"
     @Published var isDictating = false
     @Published var includeSystemAudio = true
+    @Published var isTranscribingMeeting = false
 
     let store: KnowledgeStore
-    let ambient: AmbientPipeline
+    let meeting: MeetingRecorder
+    let dictationMic = DictationMicCapture()
     let asr: ASRService
     let dictation: DictationController
     let gallery: SpeakerGallery
@@ -139,10 +138,10 @@ final class AppModel: ObservableObject {
 
     var menuBarSymbol: String {
         if isDictating { return "mic.fill" }
-        switch ambientState {
-        case .listening, .inConversation: return "waveform"
-        case .paused: return "pause.circle"
-        case .stopped: return "ear"
+        if isTranscribingMeeting { return "hourglass" }
+        switch recordingState {
+        case .recording: return "record.circle.fill"
+        case .stopped: return "waveform.circle"
         }
     }
 
@@ -154,28 +153,40 @@ final class AppModel: ObservableObject {
             self.dictation = DictationController(asr: asr, store: store, permissions: permissions)
             self.gallery = try SpeakerGallery(store: store)
             self.diarizer = DiarizationService(gallery: gallery, embedder: ECAPAGGMLEmbedder())
-            self.ambient = AmbientPipeline(includeSystemAudio: true)
-            ambient.onConversationClosed = { [weak self] segment in
-                Task { @MainActor in
-                    await self?.finalize(segment: segment)
-                }
+            self.meeting = MeetingRecorder(includeSystemAudio: true)
+            meeting.onPCM = { [weak self] samples in
+                self?.routePCM(samples)
             }
-            ambient.onPCM = { [weak self] samples in
-                guard let self else { return }
-                if self.isDictating {
-                    self.dictation.appendPCM(samples)
-                    let rms = sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(max(samples.count, 1)))
-                    self.overlay.updateLevel(rms)
-                }
+            dictationMic.onPCM = { [weak self] samples in
+                self?.routePCM(samples)
             }
             wireHotkey()
             reload()
-            statusMessage = WhisperCPPConfiguration.defaultLocal() == nil
-                ? "Ready (stub ASR — run Scripts/setup-whisper-darwin.sh for whisper.cpp)"
-                : "Ready (whisper.cpp)"
+            Task { await self.bootstrapASR() }
         } catch {
             fatalError("Failed to start Alethia: \(error)")
         }
+    }
+
+    private func routePCM(_ samples: [Float]) {
+        guard isDictating || dictation.isDictating else { return }
+        dictation.appendPCM(samples)
+        let rms = sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(max(samples.count, 1)))
+        overlay.updateLevel(rms)
+    }
+
+    private func bootstrapASR() async {
+        _ = await CrisperSidecarLauncher.ensureRunning()
+        await refreshStatus()
+    }
+
+    private func refreshStatus() async {
+        let asrOK = await CrisperWhisperRecognizer.isHealthy()
+        let axOK = permissions.accessibilityTrusted(prompt: false)
+        var parts: [String] = []
+        parts.append(asrOK ? "ASR: CrisperWhisper" : "ASR: offline — run ./Scripts/setup-crisperwhisper.sh")
+        parts.append(axOK ? "AX: on" : "AX: off (menu dictation works; Fn+auto-paste need AX)")
+        statusMessage = parts.joined(separator: " · ")
     }
 
     private func wireHotkey() {
@@ -189,22 +200,33 @@ final class AppModel: ObservableObject {
         speakers = (try? store.allSpeakers()) ?? []
     }
 
-    func toggleAmbient() {
+    func toggleMeetingRecording() {
         Task {
             do {
-                if ambientState == .stopped || ambientState == .paused {
+                if recordingState == .stopped {
                     try await permissions.requireMicrophone()
-                    try ambient.start()
-                    ambientState = ambient.state
+                    meeting.includeSystemAudio = includeSystemAudio
+                    try meeting.start()
+                    recordingState = .recording
                     statusMessage = includeSystemAudio
-                        ? "Ambient listening (mic + system audio)"
-                        : "Ambient listening (mic)"
+                        ? "Recording meeting (mic + system audio)…"
+                        : "Recording meeting (mic)…"
                 } else {
-                    ambient.stop()
-                    ambientState = .stopped
-                    statusMessage = "Ambient stopped"
+                    statusMessage = "Transcribing meeting…"
+                    isTranscribingMeeting = true
+                    let capture = meeting.stop()
+                    recordingState = .stopped
+                    if let capture {
+                        await finalizeMeeting(capture)
+                    } else {
+                        statusMessage = "Meeting stopped (no audio captured)"
+                        await refreshStatus()
+                    }
+                    isTranscribingMeeting = false
                 }
             } catch {
+                isTranscribingMeeting = false
+                recordingState = meeting.state
                 statusMessage = error.localizedDescription
             }
         }
@@ -213,17 +235,22 @@ final class AppModel: ObservableObject {
     func beginDictation() {
         Task {
             do {
+                guard !isDictating else { return }
                 try await permissions.requireMicrophone()
+                // Prefer shared meeting stream; otherwise start mic-only capture.
+                if recordingState != .recording, !dictationMic.isRunning {
+                    try dictationMic.start()
+                }
                 try dictation.begin()
                 isDictating = true
                 overlay.show()
-                // Ensure capture is running so dictation gets PCM even if ambient was off.
-                if ambientState == .stopped || ambientState == .paused {
-                    try ambient.start()
-                    ambientState = ambient.state
-                }
-                statusMessage = "Dictating… (release hotkey to type)"
+                statusMessage = "Dictating… speak, then release Fn (or Finish)"
             } catch {
+                isDictating = false
+                overlay.hide()
+                if recordingState != .recording {
+                    dictationMic.stop()
+                }
                 statusMessage = error.localizedDescription
             }
         }
@@ -231,15 +258,28 @@ final class AppModel: ObservableObject {
 
     func endDictation() {
         Task {
+            guard isDictating || dictation.isDictating else { return }
             do {
-                _ = try await dictation.end(targetBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+                let event = try await dictation.end(
+                    targetBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                )
                 isDictating = false
                 overlay.hide()
-                statusMessage = "Dictation saved to knowledge"
+                if recordingState != .recording {
+                    dictationMic.stop()
+                }
+                if dictation.lastPasteNeedsManual {
+                    statusMessage = "Transcribed (clipboard). Press ⌘V — enable Accessibility for auto-paste. “\(event.text.prefix(48))”"
+                } else {
+                    statusMessage = "Dictation saved: \(event.text.prefix(64))"
+                }
                 reload()
             } catch {
                 isDictating = false
                 overlay.hide()
+                if recordingState != .recording {
+                    dictationMic.stop()
+                }
                 statusMessage = error.localizedDescription
             }
         }
@@ -262,19 +302,23 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func finalize(segment: ConversationSegment) async {
+    private func finalizeMeeting(_ capture: MeetingCapture) async {
         do {
-            let transcripts = try await asr.transcribe(pcm: segment.pcm)
+            let transcripts = try await asr.transcribe(
+                pcm: capture.pcm,
+                sampleRate: capture.sampleRate,
+                mode: .verbatim
+            )
             let diarized = try diarizer.diarize(
-                pcm: segment.pcm,
-                sampleRate: 16_000,
+                pcm: capture.pcm,
+                sampleRate: capture.sampleRate,
                 transcripts: transcripts.map { ($0.startMs, $0.endMs, $0.text) }
             )
             var session = ConversationSession(
-                title: "Conversation",
-                startedAt: segment.startedAt,
-                endedAt: segment.endedAt ?? Date(),
-                source: .ambient,
+                title: "Meeting",
+                startedAt: capture.startedAt,
+                endedAt: capture.endedAt,
+                source: includeSystemAudio ? .mixed : .meeting,
                 utterances: diarized.map {
                     Utterance(
                         speakerID: $0.speakerID,
@@ -289,8 +333,7 @@ final class AppModel: ObservableObject {
                 session.title = String(first.text.prefix(48))
             }
             try store.saveSession(session)
-            ambientState = ambient.state
-            statusMessage = "Saved conversation"
+            statusMessage = "Meeting saved"
             reload()
         } catch {
             statusMessage = error.localizedDescription
