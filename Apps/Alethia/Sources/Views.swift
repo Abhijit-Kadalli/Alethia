@@ -54,16 +54,17 @@ struct MenuBarView: View {
 struct HubView: View {
     @EnvironmentObject private var model: AppModel
     @State private var query = ""
-    @State private var renameDrafts: [UUID: String] = [:]
     @AppStorage("alethia.didOnboard") private var didOnboard = false
     @State private var showOnboarding = false
     @State private var meetingPendingDelete: ConversationSession?
+    @State private var showSettings = false
 
     private let speakerColors: [Color] = [
-        Color(red: 0.20, green: 0.45, blue: 0.55),
-        Color(red: 0.55, green: 0.35, blue: 0.20),
-        Color(red: 0.30, green: 0.50, blue: 0.30),
-        Color(red: 0.50, green: 0.28, blue: 0.40)
+        Color(red: 0.18, green: 0.42, blue: 0.52),
+        Color(red: 0.52, green: 0.34, blue: 0.18),
+        Color(red: 0.28, green: 0.48, blue: 0.30),
+        Color(red: 0.48, green: 0.26, blue: 0.38),
+        Color(red: 0.32, green: 0.36, blue: 0.55)
     ]
 
     var body: some View {
@@ -76,17 +77,26 @@ struct HubView: View {
                             .foregroundStyle(.secondary)
                     }
                     ForEach(model.sessions) { session in
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 3) {
                             Text(session.title ?? "Meeting")
                                 .font(.headline)
                                 .lineLimit(2)
                             Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
-                            Text("\(session.utterances.count) lines · \(displaySource(session.source))")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                            HStack(spacing: 6) {
+                                Text("\(session.utterances.count) lines")
+                                Text("·")
+                                Text(displaySource(session.source))
+                                if session.notesMarkdown != nil {
+                                    Text("·")
+                                    Image(systemName: "doc.text")
+                                }
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                         }
+                        .padding(.vertical, 2)
                         .tag(session.id)
                         .contextMenu {
                             Button("Delete Meeting", role: .destructive) {
@@ -130,7 +140,7 @@ struct HubView: View {
                             model.openSearchHit(hit)
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(hit.title).font(.headline)
+                                Text(hit.title).font(.subheadline.weight(.semibold))
                                 Text(hit.snippet).font(.caption).foregroundStyle(.secondary)
                                 Text(hit.kind.rawValue.uppercased())
                                     .font(.caption2)
@@ -142,33 +152,18 @@ struct HubView: View {
                         .buttonStyle(.plain)
                     }
                 }
-
-                Section("Speakers") {
-                    ForEach(model.speakers) { speaker in
-                        HStack {
-                            TextField(
-                                "Name",
-                                text: Binding(
-                                    get: { renameDrafts[speaker.id] ?? speaker.displayName },
-                                    set: { renameDrafts[speaker.id] = $0 }
-                                )
-                            )
-                            Button("Save") {
-                                let name = renameDrafts[speaker.id] ?? speaker.displayName
-                                model.renameSpeaker(speaker, to: name)
-                            }
-                            .disabled((renameDrafts[speaker.id] ?? speaker.displayName)
-                                .trimmingCharacters(in: .whitespaces).isEmpty)
-                        }
-                    }
-                    if model.speakers.isEmpty {
-                        Text("Speakers appear after meeting recordings.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 280, ideal: 320)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 280, ideal: 320)
         } detail: {
             NavigationStack {
                 if let meeting = model.selectedMeeting {
@@ -181,13 +176,13 @@ struct HubView: View {
                     ContentUnavailableView(
                         "No meetings yet",
                         systemImage: "waveform.circle",
-                        description: Text("Start meeting recording from the menu bar. Each meeting’s transcript appears here — toggle Verbatim / Clean in the detail view.")
+                        description: Text("Start meeting recording from the menu bar. Transcripts, people, and notes appear here.")
                     )
                 } else {
                     ContentUnavailableView(
                         "Select a meeting",
                         systemImage: "sidebar.left",
-                        description: Text("Choose a meeting from the sidebar to view its transcript.")
+                        description: Text("Choose a meeting from the sidebar to view its transcript and notes.")
                     )
                 }
             }
@@ -202,6 +197,10 @@ struct HubView: View {
             didOnboard = true
         }) {
             OnboardingView(isPresented: $showOnboarding)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .environmentObject(model)
         }
         .confirmationDialog(
             "Delete this meeting?",
@@ -234,131 +233,481 @@ struct HubView: View {
     }
 }
 
+// MARK: - Meeting detail
+
 struct MeetingDetailView: View {
     @EnvironmentObject private var model: AppModel
     let session: ConversationSession
     let speakerColors: [Color]
     var onDelete: () -> Void = {}
 
+    @State private var labelDrafts: [UUID: String] = [:]
+
+    private var people: [MeetingPerson] {
+        MeetingPerson.unique(from: session.utterances)
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(session.title ?? "Meeting")
-                        .font(.title2.weight(.semibold))
-                    Text(metaLine)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Picker("Transcript style", selection: $model.hubShowVerbatim) {
-                        Text("Verbatim").tag(true)
-                        Text("Clean").tag(false)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 280)
-
-                    Toggle("Per-word timings", isOn: $model.hubShowWordTimings)
-                        .toggleStyle(.switch)
-                        .frame(maxWidth: 280, alignment: .leading)
-
-                    Text(model.hubShowVerbatim
-                         ? "What was said (fillers & disfluencies kept)"
-                         : "What was meant (cleaned / intended)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    if model.hubShowWordTimings {
-                        Text("Shows start time under each word when available (new meetings).")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-
-                Divider()
-
-                if session.utterances.isEmpty {
-                    Text("No transcript stored for this meeting.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    let speakers = uniqueSpeakers(session.utterances)
-                    Text("\(speakers.count) speaker\(speakers.count == 1 ? "" : "s")")
-                        .font(.headline)
-
-                    ForEach(Array(session.utterances.enumerated()), id: \.element.id) { idx, u in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .top, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(u.speakerLabel)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(color(for: u, index: idx))
-                                    Text(formatMs(u.startMs))
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .frame(width: 100, alignment: .leading)
-                                Text(u.displayText(verbatim: model.hubShowVerbatim))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                            }
-                            if model.hubShowWordTimings {
-                                if u.words.isEmpty {
-                                    Text("No word timings for this line")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                        .padding(.leading, 112)
-                                } else {
-                                    WordTimingFlow(words: u.words)
-                                        .padding(.leading, 112)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
+            VStack(alignment: .leading, spacing: 22) {
+                header
+                peopleSection
+                notesSection
+                transcriptSection
             }
-            .padding(24)
+            .padding(28)
+            .frame(maxWidth: 920, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    model.generateNotes(for: session)
+                } label: {
+                    if model.isGeneratingNotes {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label(
+                            session.notesMarkdown == nil ? "Generate Notes" : "Regenerate Notes",
+                            systemImage: "sparkles"
+                        )
+                    }
+                }
+                .disabled(model.isGeneratingNotes || session.utterances.isEmpty)
+            }
             ToolbarItem(placement: .destructiveAction) {
-                Button("Delete Meeting", role: .destructive, action: onDelete)
+                Button("Delete", role: .destructive, action: onDelete)
             }
         }
+        .onAppear {
+            for person in people {
+                if labelDrafts[person.id] == nil {
+                    labelDrafts[person.id] = person.label
+                }
+            }
+        }
+        .onChange(of: session.id) { _, _ in
+            labelDrafts = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.label) })
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(session.title ?? "Meeting")
+                .font(.largeTitle.weight(.semibold))
+                .textSelection(.enabled)
+            Text(metaLine)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 16) {
+                Picker("Transcript", selection: $model.hubShowVerbatim) {
+                    Text("Verbatim").tag(true)
+                    Text("Clean").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 240)
+
+                Toggle("Word timings", isOn: $model.hubShowWordTimings)
+                    .toggleStyle(.checkbox)
+            }
+
+            Text(model.hubShowVerbatim
+                 ? "What was said — fillers and disfluencies kept"
+                 : "What was meant — cleaned / intended phrasing")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private var peopleSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("People")
+                .font(.title3.weight(.semibold))
+            Text("Label Person 1 / Person 2 for this meeting. Over time, Alethia learns voice fingerprints and only suggests a name when confidence is at least 80%.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if people.isEmpty {
+                Text("No speakers detected in this transcript.")
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(Array(people.enumerated()), id: \.element.id) { idx, person in
+                        personRow(person, color: speakerColors[idx % speakerColors.count])
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func personRow(_ person: MeetingPerson, color: Color) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Circle()
+                .fill(color.opacity(0.9))
+                .frame(width: 28, height: 28)
+                .overlay {
+                    Text(person.initials)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    TextField(
+                        "Name",
+                        text: Binding(
+                            get: { labelDrafts[person.id] ?? person.label },
+                            set: { labelDrafts[person.id] = $0 }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+
+                    Button("Save") {
+                        let name = labelDrafts[person.id] ?? person.label
+                        model.labelMeetingSpeaker(
+                            sessionID: session.id,
+                            speakerID: person.id,
+                            name: name
+                        )
+                    }
+                    .disabled(((labelDrafts[person.id] ?? person.label)
+                        .trimmingCharacters(in: .whitespaces)).isEmpty)
+
+                    if let suggestion = person.suggestion, let confidence = person.confidence {
+                        Button {
+                            model.acceptSpeakerSuggestion(
+                                sessionID: session.id,
+                                speakerID: person.id,
+                                name: suggestion
+                            )
+                            labelDrafts[person.id] = suggestion
+                        } label: {
+                            Label(
+                                "Maybe \(suggestion) · \(Int((confidence * 100).rounded()))%",
+                                systemImage: "sparkle.magnifyingglass"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(color)
+                        .help("Accept identity suggestion (≥ 80% confidence)")
+                    }
+                }
+                Text("\(person.lineCount) line\(person.lineCount == 1 ? "" : "s") in this meeting")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var notesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Notes")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                if let generated = session.notesGeneratedAt {
+                    Text("Updated \(generated.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            if let err = model.notesError, model.selectedMeetingID == session.id {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if let notes = session.notesMarkdown, !notes.isEmpty {
+                Text(notes)
+                    .font(.body)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No notes yet")
+                        .font(.headline)
+                    Text(model.hasOpenRouterAPIKey
+                          ? "Generate a summary with GPT-5.6 Luna via OpenRouter."
+                          : "Add an OpenRouter API key in Settings, then generate notes with GPT-5.6 Luna.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        model.generateNotes(for: session)
+                    } label: {
+                        Label(
+                            model.isGeneratingNotes ? "Generating…" : "Generate Notes",
+                            systemImage: "sparkles"
+                        )
+                    }
+                    .disabled(model.isGeneratingNotes || session.utterances.isEmpty || !model.hasOpenRouterAPIKey)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+    }
+
+    private var transcriptSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Transcript")
+                .font(.title3.weight(.semibold))
+
+            if session.utterances.isEmpty {
+                Text("No transcript stored for this meeting.")
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(session.utterances.enumerated()), id: \.element.id) { idx, u in
+                        utteranceRow(u, index: idx)
+                        if idx < session.utterances.count - 1 {
+                            Divider().opacity(0.35)
+                        }
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+        }
+    }
+
+    private func utteranceRow(_ u: Utterance, index: Int) -> some View {
+        let color = color(for: u, index: index)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 8, height: 8)
+                        Text(u.speakerLabel)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(color)
+                    }
+                    Text(formatMs(u.startMs))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                    if let suggestion = u.suggestedSpeakerLabel, let conf = u.matchConfidence {
+                        Text("Maybe \(suggestion) · \(Int((conf * 100).rounded()))%")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 130, alignment: .leading)
+
+                Text(u.displayText(verbatim: model.hubShowVerbatim))
+                    .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            if model.hubShowWordTimings {
+                if u.words.isEmpty {
+                    Text("No word timings for this line")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, 142)
+                } else {
+                    WordTimingFlow(words: u.words)
+                        .padding(.leading, 142)
+                }
+            }
+        }
+        .padding(.vertical, 10)
     }
 
     private var metaLine: String {
         let start = session.startedAt.formatted(date: .abbreviated, time: .shortened)
         let end = session.endedAt?.formatted(date: .omitted, time: .shortened)
-        let speakers = uniqueSpeakers(session.utterances).count
+        let speakers = people.count
         if let end {
-            return "\(start) – \(end) · \(session.utterances.count) lines · \(speakers) speakers"
+            return "\(start) – \(end) · \(session.utterances.count) lines · \(speakers) people"
         }
-        return "\(start) · \(session.utterances.count) lines · \(speakers) speakers"
-    }
-
-    private func uniqueSpeakers(_ utterances: [Utterance]) -> [String] {
-        var seen = Set<String>()
-        var out: [String] = []
-        for u in utterances {
-            if seen.insert(u.speakerLabel).inserted {
-                out.append(u.speakerLabel)
-            }
-        }
-        return out
+        return "\(start) · \(session.utterances.count) lines · \(speakers) people"
     }
 
     private func color(for utterance: Utterance, index: Int) -> Color {
-        let speakers = uniqueSpeakers(session.utterances)
-        let speakerIndex = speakers.firstIndex(of: utterance.speakerLabel) ?? index
+        let labels = people.map(\.label)
+        let speakerIndex = labels.firstIndex(of: utterance.speakerLabel) ?? index
         return speakerColors[speakerIndex % speakerColors.count]
     }
 
     private func formatMs(_ ms: Int) -> String {
         let total = max(ms, 0) / 1000
-        let m = total / 60
-        let s = total % 60
-        return String(format: "%d:%02d", m, s)
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
+
+private struct MeetingPerson: Identifiable, Hashable {
+    let id: UUID
+    let label: String
+    let suggestion: String?
+    let confidence: Float?
+    let lineCount: Int
+
+    var initials: String {
+        let parts = label.split(separator: " ")
+        if parts.count >= 2 {
+            return String(parts[0].prefix(1) + parts[1].prefix(1)).uppercased()
+        }
+        return String(label.prefix(2)).uppercased()
+    }
+
+    static func unique(from utterances: [Utterance]) -> [MeetingPerson] {
+        var order: [UUID] = []
+        var map: [UUID: (label: String, suggestion: String?, confidence: Float?, count: Int)] = [:]
+        for u in utterances {
+            guard let sid = u.speakerID else { continue }
+            if map[sid] == nil {
+                order.append(sid)
+                map[sid] = (u.speakerLabel, u.suggestedSpeakerLabel, u.matchConfidence, 1)
+            } else {
+                map[sid]!.count += 1
+                if map[sid]!.suggestion == nil {
+                    map[sid]!.suggestion = u.suggestedSpeakerLabel
+                    map[sid]!.confidence = u.matchConfidence
+                }
+            }
+        }
+        // Fallback for utterances without speakerID: group by label.
+        if order.isEmpty {
+            var byLabel: [String: (UUID, Int, String?, Float?)] = [:]
+            var labelOrder: [String] = []
+            for u in utterances {
+                if byLabel[u.speakerLabel] == nil {
+                    labelOrder.append(u.speakerLabel)
+                    byLabel[u.speakerLabel] = (u.speakerID ?? UUID(), 1, u.suggestedSpeakerLabel, u.matchConfidence)
+                } else {
+                    byLabel[u.speakerLabel]!.1 += 1
+                }
+            }
+            return labelOrder.compactMap { label in
+                guard let row = byLabel[label] else { return nil }
+                return MeetingPerson(
+                    id: row.0,
+                    label: label,
+                    suggestion: row.2,
+                    confidence: row.3,
+                    lineCount: row.1
+                )
+            }
+        }
+        return order.compactMap { id in
+            guard let row = map[id] else { return nil }
+            return MeetingPerson(
+                id: id,
+                label: row.label,
+                suggestion: row.suggestion,
+                confidence: row.confidence,
+                lineCount: row.count
+            )
+        }
+    }
+}
+
+// MARK: - Settings
+
+struct SettingsView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var apiKeyDraft = ""
+    @State private var showKey = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Settings")
+                .font(.title2.weight(.semibold))
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("OpenRouter")
+                        .font(.headline)
+                    Text("Used only for optional meeting notes. Audio and transcripts stay on your Mac; the transcript text is sent to OpenRouter when you generate notes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack {
+                        Group {
+                            if showKey {
+                                TextField("sk-or-…", text: $apiKeyDraft)
+                            } else {
+                                SecureField("sk-or-…", text: $apiKeyDraft)
+                            }
+                        }
+                        .textFieldStyle(.roundedBorder)
+
+                        Button(showKey ? "Hide" : "Show") {
+                            showKey.toggle()
+                        }
+                    }
+
+                    Text("Model: GPT-5.6 Luna (`openai/gpt-5.6-luna`)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+
+                    HStack {
+                        Button("Save Key") {
+                            model.openRouterAPIKey = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                            dismiss()
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  && model.openRouterAPIKey.isEmpty)
+
+                        if model.hasOpenRouterAPIKey {
+                            Button("Remove Key", role: .destructive) {
+                                apiKeyDraft = ""
+                                model.openRouterAPIKey = ""
+                            }
+                        }
+                        Spacer()
+                        Button("Done") { dismiss() }
+                    }
+                }
+                .padding(8)
+            }
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("People")
+                        .font(.headline)
+                    Text("Meetings start with Person 1, Person 2, …. Label them in the meeting view. Voice fingerprints update in the background; Alethia only shows “Maybe …” when confidence is ≥ 80%.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("\(model.speakers.filter(\.isUserLabeled).count) labeled · \(model.speakers.count) enrolled")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(8)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+        .frame(width: 520, height: 380)
+        .onAppear {
+            apiKeyDraft = model.openRouterAPIKey
+        }
+    }
+}
+
+// MARK: - Word timings
 
 struct WordTimingFlow: View {
     let words: [TimedWord]
@@ -368,12 +717,10 @@ struct WordTimingFlow: View {
     }
 }
 
-/// Simple wrapping layout for timed words without UIKit FlowLayout.
 private struct FlexibleWordWrap: View {
     let words: [TimedWord]
 
     var body: some View {
-        // Chunk into rows of ~8 words for readability.
         let rows = stride(from: 0, to: words.count, by: 8).map { start in
             Array(words[start..<min(start + 8, words.count)])
         }
@@ -414,15 +761,15 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Welcome to Alethia")
                 .font(.title.weight(.semibold))
-            Text("Fully local meeting transcripts + speak-to-type. Audio and transcripts stay on your Mac.")
+            Text("Local meeting transcripts and speak-to-type. Label people as you go; optional OpenRouter notes stay under your control.")
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
                 Label("Hold Fn — dictate into any app", systemImage: "keyboard")
                 Label("Menu bar — start/stop meeting recording", systemImage: "record.circle")
-                Label("Hub — each meeting’s verbatim transcript", systemImage: "list.bullet.rectangle")
+                Label("Hub — Person 1 / Person 2, labels, and notes", systemImage: "person.2")
                 Label("Microphone — meetings & dictation", systemImage: "mic")
                 Label("Accessibility — auto-paste dictated text", systemImage: "accessibility")
-                Label("Screen Recording — optional system audio for meetings", systemImage: "rectangle.dashed.badge.record")
+                Label("Screen Recording — optional system audio", systemImage: "rectangle.dashed.badge.record")
             }
             Text("Recording others may require consent. You are responsible for following local law and policy.")
                 .font(.caption)
@@ -434,6 +781,6 @@ struct OnboardingView: View {
             }
         }
         .padding(28)
-        .frame(width: 480)
+        .frame(width: 500)
     }
 }

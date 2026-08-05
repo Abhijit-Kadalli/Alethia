@@ -15,6 +15,8 @@ public struct PipelineConfig: Codable, Sendable {
     public var closeSilenceMs: Int
     public var minConversationSpeechMs: Int
     public var speakerMatchThreshold: Float
+    /// Only surface “Maybe …” identity hints at or above this cosine score.
+    public var speakerSuggestionThreshold: Float
 
     public static let `default` = PipelineConfig(
         sampleRate: 16_000,
@@ -24,7 +26,8 @@ public struct PipelineConfig: Codable, Sendable {
         openSpeechMs: 150,
         closeSilenceMs: 500,
         minConversationSpeechMs: 1500,
-        speakerMatchThreshold: 0.72
+        speakerMatchThreshold: 0.62,
+        speakerSuggestionThreshold: 0.80
     )
 
     public init(
@@ -35,7 +38,8 @@ public struct PipelineConfig: Codable, Sendable {
         openSpeechMs: Int,
         closeSilenceMs: Int,
         minConversationSpeechMs: Int,
-        speakerMatchThreshold: Float
+        speakerMatchThreshold: Float,
+        speakerSuggestionThreshold: Float = 0.80
     ) {
         self.sampleRate = sampleRate
         self.frameMs = frameMs
@@ -45,5 +49,6 @@ public struct PipelineConfig: Codable, Sendable {
         self.closeSilenceMs = closeSilenceMs
         self.minConversationSpeechMs = minConversationSpeechMs
         self.speakerMatchThreshold = speakerMatchThreshold
+        self.speakerSuggestionThreshold = speakerSuggestionThreshold
     }
 }

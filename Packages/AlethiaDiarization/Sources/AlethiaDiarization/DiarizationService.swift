@@ -144,6 +144,8 @@ public struct DiarizedUtterance: Sendable {
     public var speakerLabel: String
     public var speakerID: UUID?
     public var embedding: [Float]
+    public var matchConfidence: Float?
+    public var suggestedSpeakerLabel: String?
 
     public init(
         startMs: Int,
@@ -152,7 +154,9 @@ public struct DiarizedUtterance: Sendable {
         intendedText: String? = nil,
         speakerLabel: String,
         speakerID: UUID? = nil,
-        embedding: [Float] = []
+        embedding: [Float] = [],
+        matchConfidence: Float? = nil,
+        suggestedSpeakerLabel: String? = nil
     ) {
         self.startMs = startMs
         self.endMs = endMs
@@ -161,17 +165,32 @@ public struct DiarizedUtterance: Sendable {
         self.speakerLabel = speakerLabel
         self.speakerID = speakerID
         self.embedding = embedding
+        self.matchConfidence = matchConfidence
+        self.suggestedSpeakerLabel = suggestedSpeakerLabel
     }
+}
+
+public struct SpeakerMatchResult: Sendable {
+    public let profile: SpeakerProfile
+    public let score: Float
+    public let meetingLabel: String
+    public let suggestedLabel: String?
 }
 
 public final class SpeakerGallery: @unchecked Sendable {
     private let store: KnowledgeStore
     private let matchThreshold: Float
+    private let suggestionThreshold: Float
     private var cache: [SpeakerProfile]
 
-    public init(store: KnowledgeStore, matchThreshold: Float = PipelineConfig.default.speakerMatchThreshold) throws {
+    public init(
+        store: KnowledgeStore,
+        matchThreshold: Float = PipelineConfig.default.speakerMatchThreshold,
+        suggestionThreshold: Float = PipelineConfig.default.speakerSuggestionThreshold
+    ) throws {
         self.store = store
         self.matchThreshold = matchThreshold
+        self.suggestionThreshold = suggestionThreshold
         self.cache = try store.allSpeakers()
     }
 
@@ -179,34 +198,60 @@ public final class SpeakerGallery: @unchecked Sendable {
         cache = try store.allSpeakers()
     }
 
-    public func matchOrCreate(embedding: [Float], provisionalIndex: Int) throws -> SpeakerProfile {
+    public func bestMatch(embedding: [Float]) -> (SpeakerProfile, Float)? {
         var best: (SpeakerProfile, Float)?
         for speaker in cache {
             guard !speaker.embedding.isEmpty else { continue }
             let score = EmbeddingMath.cosine(speaker.embedding, embedding)
-            if score >= matchThreshold {
-                if best == nil || score > best!.1 {
-                    best = (speaker, score)
-                }
+            if best == nil || score > best!.1 {
+                best = (speaker, score)
             }
         }
-        if var known = best?.0 {
-            known.embedding = EmbeddingMath.ema(known.embedding, embedding)
-            known.updatedAt = Date()
-            try store.upsertSpeaker(known)
-            if let idx = cache.firstIndex(where: { $0.id == known.id }) {
-                cache[idx] = known
+        return best
+    }
+
+    /// Enrolls/updates a meeting cluster. Always returns a local `Person N` label;
+    /// only suggests a gallery name when confidence ≥ suggestion threshold and the gallery entry is user-labeled.
+    public func resolveCluster(embedding: [Float], personIndex: Int) throws -> SpeakerMatchResult {
+        let meetingLabel = SpeakerProfile.provisionalLabel(index: personIndex)
+        if let (known, score) = bestMatch(embedding: embedding), score >= matchThreshold {
+            var updated = known
+            updated.embedding = EmbeddingMath.ema(known.embedding, embedding)
+            updated.updatedAt = Date()
+            try store.upsertSpeaker(updated)
+            if let idx = cache.firstIndex(where: { $0.id == updated.id }) {
+                cache[idx] = updated
+            } else {
+                cache.append(updated)
             }
-            return known
+            let suggestion: String? = (score >= suggestionThreshold && updated.isUserLabeled)
+                ? updated.displayName
+                : nil
+            return SpeakerMatchResult(
+                profile: updated,
+                score: score,
+                meetingLabel: meetingLabel,
+                suggestedLabel: suggestion
+            )
         }
 
         let profile = SpeakerProfile(
-            displayName: "Speaker \(provisionalIndex)",
+            displayName: meetingLabel,
             embedding: embedding
         )
         try store.upsertSpeaker(profile)
         cache.append(profile)
-        return profile
+        return SpeakerMatchResult(
+            profile: profile,
+            score: 1,
+            meetingLabel: meetingLabel,
+            suggestedLabel: nil
+        )
+    }
+
+    /// Legacy helper used by older call sites / tests.
+    public func matchOrCreate(embedding: [Float], provisionalIndex: Int) throws -> SpeakerProfile {
+        try resolveCluster(embedding: embedding, personIndex: provisionalIndex).profile
     }
 
     public func rename(id: UUID, to name: String) throws {
@@ -277,18 +322,18 @@ public final class DiarizationService: @unchecked Sendable {
             clusterOfTurn[i] = assigned
         }
 
-        // Map each meeting cluster → gallery speaker once (stable labels).
-        var profileForCluster: [Int: SpeakerProfile] = [:]
+        // Map each meeting cluster → Person N (+ optional Maybe … suggestion).
+        var resolveForCluster: [Int: SpeakerMatchResult] = [:]
         for (clusterID, centroid) in centroids.enumerated() {
-            profileForCluster[clusterID] = try gallery.matchOrCreate(
+            resolveForCluster[clusterID] = try gallery.resolveCluster(
                 embedding: centroid,
-                provisionalIndex: clusterID + 1
+                personIndex: clusterID + 1
             )
         }
 
         var results: [DiarizedUtterance] = []
         for (i, t) in turns.enumerated() {
-            let profile = profileForCluster[clusterOfTurn[i]]!
+            let resolved = resolveForCluster[clusterOfTurn[i]]!
             let intended = Self.overlappingText(
                 startMs: t.startMs,
                 endMs: t.endMs,
@@ -300,9 +345,11 @@ public final class DiarizationService: @unchecked Sendable {
                     endMs: t.endMs,
                     text: t.text,
                     intendedText: intended.isEmpty ? nil : intended,
-                    speakerLabel: profile.displayName,
-                    speakerID: profile.id,
-                    embedding: embeddings[i]
+                    speakerLabel: resolved.meetingLabel,
+                    speakerID: resolved.profile.id,
+                    embedding: embeddings[i],
+                    matchConfidence: resolved.suggestedLabel == nil ? nil : resolved.score,
+                    suggestedSpeakerLabel: resolved.suggestedLabel
                 )
             )
         }
@@ -402,6 +449,12 @@ public final class DiarizationService: @unchecked Sendable {
                 } else {
                     current.intendedText = current.intendedText ?? next.intendedText
                 }
+                if let a = current.matchConfidence, let b = next.matchConfidence {
+                    current.matchConfidence = max(a, b)
+                } else {
+                    current.matchConfidence = current.matchConfidence ?? next.matchConfidence
+                }
+                current.suggestedSpeakerLabel = current.suggestedSpeakerLabel ?? next.suggestedSpeakerLabel
             } else {
                 out.append(current)
                 current = next

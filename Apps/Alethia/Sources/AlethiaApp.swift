@@ -131,6 +131,8 @@ final class AppModel: ObservableObject {
     @Published var hubShowVerbatim = true
     /// Hub: show per-word timestamps under each utterance.
     @Published var hubShowWordTimings = false
+    @Published var isGeneratingNotes = false
+    @Published var notesError: String?
 
     var selectedMeeting: ConversationSession? {
         guard let selectedMeetingID else { return sessions.first }
@@ -358,6 +360,73 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func labelMeetingSpeaker(sessionID: UUID, speakerID: UUID, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try store.relabelSpeaker(sessionID: sessionID, speakerID: speakerID, to: trimmed)
+            try gallery.reload()
+            reload()
+            statusMessage = "Labeled as \(trimmed)"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func acceptSpeakerSuggestion(sessionID: UUID, speakerID: UUID, name: String) {
+        labelMeetingSpeaker(sessionID: sessionID, speakerID: speakerID, name: name)
+    }
+
+    var openRouterAPIKey: String {
+        get { KeychainStore.get(account: KeychainStore.openRouterAPIKeyAccount) ?? "" }
+        set {
+            do {
+                try KeychainStore.set(newValue, account: KeychainStore.openRouterAPIKeyAccount)
+                objectWillChange.send()
+            } catch {
+                statusMessage = error.localizedDescription
+            }
+        }
+    }
+
+    var hasOpenRouterAPIKey: Bool {
+        !(KeychainStore.get(account: KeychainStore.openRouterAPIKeyAccount) ?? "").isEmpty
+    }
+
+    func generateNotes(for session: ConversationSession) {
+        Task {
+            await generateNotesAsync(for: session)
+        }
+    }
+
+    private func generateNotesAsync(for session: ConversationSession) async {
+        notesError = nil
+        let key = openRouterAPIKey
+        guard !key.isEmpty else {
+            notesError = "Add an OpenRouter API key in Settings to generate notes."
+            statusMessage = notesError ?? ""
+            return
+        }
+        isGeneratingNotes = true
+        statusMessage = "Generating notes…"
+        defer { isGeneratingNotes = false }
+        do {
+            let client = OpenRouterNotesClient(apiKey: key)
+            let markdown = try await client.generateNotes(
+                title: session.title,
+                startedAt: session.startedAt,
+                utterances: session.utterances,
+                verbatim: hubShowVerbatim
+            )
+            try store.updateSessionNotes(sessionID: session.id, markdown: markdown)
+            reload()
+            statusMessage = "Notes ready"
+        } catch {
+            notesError = error.localizedDescription
+            statusMessage = error.localizedDescription
+        }
+    }
+
     private func finalizeMeeting(_ capture: MeetingCapture) async {
         do {
             async let verbatimTask = asr.transcribe(
@@ -394,7 +463,9 @@ final class AppModel: ObservableObject {
                     endMs: d.endMs,
                     text: d.text,
                     intendedText: d.intendedText,
-                    words: words
+                    words: words,
+                    matchConfidence: d.matchConfidence,
+                    suggestedSpeakerLabel: d.suggestedSpeakerLabel
                 )
             }
             if utterances.isEmpty {

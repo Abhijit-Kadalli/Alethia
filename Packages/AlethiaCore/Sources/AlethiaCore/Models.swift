@@ -7,6 +7,9 @@ public struct ConversationSession: Identifiable, Codable, Sendable, Hashable {
     public var endedAt: Date?
     public var source: CaptureSource
     public var utterances: [Utterance]
+    /// Markdown meeting notes generated via OpenRouter (optional).
+    public var notesMarkdown: String?
+    public var notesGeneratedAt: Date?
 
     public init(
         id: UUID = UUID(),
@@ -14,7 +17,9 @@ public struct ConversationSession: Identifiable, Codable, Sendable, Hashable {
         startedAt: Date = Date(),
         endedAt: Date? = nil,
         source: CaptureSource = .meeting,
-        utterances: [Utterance] = []
+        utterances: [Utterance] = [],
+        notesMarkdown: String? = nil,
+        notesGeneratedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -22,6 +27,8 @@ public struct ConversationSession: Identifiable, Codable, Sendable, Hashable {
         self.endedAt = endedAt
         self.source = source
         self.utterances = utterances
+        self.notesMarkdown = notesMarkdown
+        self.notesGeneratedAt = notesGeneratedAt
     }
 }
 
@@ -59,16 +66,22 @@ public struct Utterance: Identifiable, Codable, Sendable, Hashable {
     public var intendedText: String?
     /// Per-word timings (verbatim when available).
     public var words: [TimedWord]
+    /// Cosine match to gallery identity (0…1), when available.
+    public var matchConfidence: Float?
+    /// Suggested gallery name when confidence ≥ 80% (shown as “Maybe …”).
+    public var suggestedSpeakerLabel: String?
 
     public init(
         id: UUID = UUID(),
         speakerID: UUID? = nil,
-        speakerLabel: String = "Speaker 1",
+        speakerLabel: String = "Person 1",
         startMs: Int,
         endMs: Int,
         text: String,
         intendedText: String? = nil,
-        words: [TimedWord] = []
+        words: [TimedWord] = [],
+        matchConfidence: Float? = nil,
+        suggestedSpeakerLabel: String? = nil
     ) {
         self.id = id
         self.speakerID = speakerID
@@ -78,6 +91,8 @@ public struct Utterance: Identifiable, Codable, Sendable, Hashable {
         self.text = text
         self.intendedText = intendedText
         self.words = words
+        self.matchConfidence = matchConfidence
+        self.suggestedSpeakerLabel = suggestedSpeakerLabel
     }
 
     public func displayText(verbatim: Bool) -> String {
@@ -110,6 +125,20 @@ public struct SpeakerProfile: Identifiable, Codable, Sendable, Hashable {
         self.displayName = displayName
         self.embedding = embedding
         self.updatedAt = updatedAt
+    }
+
+    /// True when the user (or an accepted suggestion) assigned a real name.
+    public var isUserLabeled: Bool {
+        !Self.isProvisionalName(displayName)
+    }
+
+    public static func isProvisionalName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.range(of: #"^(Person|Speaker)\s+\d+$"#, options: .regularExpression) != nil
+    }
+
+    public static func provisionalLabel(index: Int) -> String {
+        "Person \(max(index, 1))"
     }
 }
 
