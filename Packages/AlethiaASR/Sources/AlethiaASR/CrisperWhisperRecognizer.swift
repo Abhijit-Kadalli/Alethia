@@ -44,10 +44,19 @@ public struct CrisperWhisperRecognizer: SpeechRecognizing {
     }
 
     public func transcribe(pcm: [Float], sampleRate: Double) async throws -> [TranscriptSegment] {
-        try await transcribe(pcm: pcm, sampleRate: sampleRate, mode: configuration.defaultMode)
+        try await transcribe(pcm: pcm, sampleRate: sampleRate, mode: configuration.defaultMode, wordTimestamps: false)
     }
 
     public func transcribe(pcm: [Float], sampleRate: Double, mode: ASRMode) async throws -> [TranscriptSegment] {
+        try await transcribe(pcm: pcm, sampleRate: sampleRate, mode: mode, wordTimestamps: false)
+    }
+
+    public func transcribe(
+        pcm: [Float],
+        sampleRate: Double,
+        mode: ASRMode,
+        wordTimestamps: Bool
+    ) async throws -> [TranscriptSegment] {
         guard !pcm.isEmpty else { return [] }
         let wav = try PCMWAVEncoder.encode(pcm: pcm, sampleRate: Int(sampleRate))
         let fallbackMs = Int(Double(pcm.count) / sampleRate * 1000)
@@ -56,7 +65,7 @@ public struct CrisperWhisperRecognizer: SpeechRecognizing {
         components.queryItems = [
             URLQueryItem(name: "mode", value: mode.rawValue),
             URLQueryItem(name: "language", value: configuration.language),
-            URLQueryItem(name: "word_timestamps", value: "0")
+            URLQueryItem(name: "word_timestamps", value: wordTimestamps ? "1" : "0")
         ]
         guard let url = components.url else {
             throw AlethiaError.audioEngine("Invalid CrisperWhisper URL")
@@ -116,19 +125,51 @@ public struct CrisperWhisperRecognizer: SpeechRecognizing {
                 )
             }
         }
+
+        let allWords = Self.parseWords(obj["words"] as? [[String: Any]] ?? [])
+
         if let segments = obj["segments"] as? [[String: Any]], !segments.isEmpty {
-            return segments.compactMap { item in
+            return segments.compactMap { item -> TranscriptSegment? in
                 guard let text = item["text"] as? String else { return nil }
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
                 let start = item["start_ms"] as? Int ?? 0
                 let end = item["end_ms"] as? Int ?? fallbackDurationMs
-                return TranscriptSegment(startMs: start, endMs: max(end, start + 1), text: trimmed)
+                let segWords: [TimedWord]
+                if let embedded = item["words"] as? [[String: Any]], !embedded.isEmpty {
+                    segWords = Self.parseWords(embedded)
+                } else {
+                    segWords = allWords.filter { $0.startMs >= start && $0.startMs < max(end, start + 1) }
+                }
+                return TranscriptSegment(
+                    startMs: start,
+                    endMs: max(end, start + 1),
+                    text: trimmed,
+                    words: segWords
+                )
             }
         }
         let text = (obj["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }
-        return [TranscriptSegment(startMs: 0, endMs: max(fallbackDurationMs, 1), text: text)]
+        return [
+            TranscriptSegment(
+                startMs: 0,
+                endMs: max(fallbackDurationMs, 1),
+                text: text,
+                words: allWords
+            )
+        ]
+    }
+
+    private static func parseWords(_ items: [[String: Any]]) -> [TimedWord] {
+        items.compactMap { item in
+            let word = (item["word"] as? String ?? item["text"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !word.isEmpty else { return nil }
+            let start = item["start_ms"] as? Int ?? Int(((item["start"] as? Double) ?? 0) * 1000)
+            let end = item["end_ms"] as? Int ?? Int(((item["end"] as? Double) ?? Double(start)) * 1000)
+            return TimedWord(word: word, startMs: start, endMs: max(end, start + 1))
+        }
     }
 
     private func multipartBody(boundary: String, fieldName: String, filename: String, data: Data) -> Data {

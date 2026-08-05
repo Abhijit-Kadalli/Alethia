@@ -51,12 +51,15 @@ public final class KnowledgeStore: @unchecked Sendable {
             speaker_label TEXT NOT NULL,
             start_ms INTEGER NOT NULL,
             end_ms INTEGER NOT NULL,
-            text TEXT NOT NULL
+            text TEXT NOT NULL,
+            intended_text TEXT,
+            words_json TEXT
         );
-        CREATE TABLE IF NOT EXISTS dictations (
+            CREATE TABLE IF NOT EXISTS dictations (
             id TEXT PRIMARY KEY,
             created_at REAL NOT NULL,
             text TEXT NOT NULL,
+            verbatim_text TEXT,
             target_bundle_id TEXT,
             session_id TEXT REFERENCES sessions(id)
         );
@@ -71,6 +74,10 @@ public final class KnowledgeStore: @unchecked Sendable {
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
             throw AlethiaError.database(String(cString: sqlite3_errmsg(db)))
         }
+        // Additive migrations for existing installs.
+        _ = sqlite3_exec(db, "ALTER TABLE dictations ADD COLUMN verbatim_text TEXT;", nil, nil, nil)
+        _ = sqlite3_exec(db, "ALTER TABLE utterances ADD COLUMN intended_text TEXT;", nil, nil, nil)
+        _ = sqlite3_exec(db, "ALTER TABLE utterances ADD COLUMN words_json TEXT;", nil, nil, nil)
     }
 
     public func upsertSpeaker(_ speaker: SpeakerProfile) throws {
@@ -123,9 +130,14 @@ public final class KnowledgeStore: @unchecked Sendable {
         for u in session.utterances {
             try exec(
                 """
-                INSERT INTO utterances(id, session_id, speaker_id, speaker_label, start_ms, end_ms, text)
-                VALUES(?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET text=excluded.text, speaker_label=excluded.speaker_label, speaker_id=excluded.speaker_id;
+                INSERT INTO utterances(id, session_id, speaker_id, speaker_label, start_ms, end_ms, text, intended_text, words_json)
+                VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                  text=excluded.text,
+                  intended_text=excluded.intended_text,
+                  words_json=excluded.words_json,
+                  speaker_label=excluded.speaker_label,
+                  speaker_id=excluded.speaker_id;
                 """,
                 binder: { stmt in
                     bindText(stmt, 1, u.id.uuidString)
@@ -135,13 +147,23 @@ public final class KnowledgeStore: @unchecked Sendable {
                     sqlite3_bind_int(stmt, 5, Int32(u.startMs))
                     sqlite3_bind_int(stmt, 6, Int32(u.endMs))
                     bindText(stmt, 7, u.text)
+                    if let intended = u.intendedText { bindText(stmt, 8, intended) } else { sqlite3_bind_null(stmt, 8) }
+                    if u.words.isEmpty {
+                        sqlite3_bind_null(stmt, 9)
+                    } else if let data = try? JSONEncoder().encode(u.words),
+                              let json = String(data: data, encoding: .utf8) {
+                        bindText(stmt, 9, json)
+                    } else {
+                        sqlite3_bind_null(stmt, 9)
+                    }
                 }
             )
+            let body = [u.text, u.intendedText].compactMap { $0 }.joined(separator: "\n")
             try indexFTS(
                 docID: u.id,
                 kind: "utterance",
                 title: u.speakerLabel,
-                body: u.text,
+                body: body,
                 createdAt: session.startedAt
             )
         }
@@ -151,23 +173,29 @@ public final class KnowledgeStore: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         try exec(
             """
-            INSERT INTO dictations(id, created_at, text, target_bundle_id, session_id)
-            VALUES(?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET text=excluded.text;
+            INSERT INTO dictations(id, created_at, text, verbatim_text, target_bundle_id, session_id)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              text=excluded.text,
+              verbatim_text=excluded.verbatim_text;
             """,
             binder: { stmt in
                 bindText(stmt, 1, event.id.uuidString)
                 sqlite3_bind_double(stmt, 2, event.createdAt.timeIntervalSince1970)
                 bindText(stmt, 3, event.text)
-                if let bid = event.targetBundleID { bindText(stmt, 4, bid) } else { sqlite3_bind_null(stmt, 4) }
-                if let sid = event.sessionID { bindText(stmt, 5, sid.uuidString) } else { sqlite3_bind_null(stmt, 5) }
+                if let verbatim = event.verbatimText { bindText(stmt, 4, verbatim) } else { sqlite3_bind_null(stmt, 4) }
+                if let bid = event.targetBundleID { bindText(stmt, 5, bid) } else { sqlite3_bind_null(stmt, 5) }
+                if let sid = event.sessionID { bindText(stmt, 6, sid.uuidString) } else { sqlite3_bind_null(stmt, 6) }
             }
         )
+        let body = [event.verbatimText, event.text]
+            .compactMap { $0 }
+            .joined(separator: "\n")
         try indexFTS(
             docID: event.id,
             kind: "dictation",
             title: "Dictation",
-            body: event.text,
+            body: body,
             createdAt: event.createdAt
         )
     }
@@ -227,7 +255,103 @@ public final class KnowledgeStore: @unchecked Sendable {
             let source = CaptureSource(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .meeting
             sessions.append(ConversationSession(id: id, title: title, startedAt: started, endedAt: ended, source: source))
         }
+
+        for i in sessions.indices {
+            sessions[i].utterances = try loadUtterancesLocked(sessionID: sessions[i].id)
+        }
         return sessions
+    }
+
+    public func session(id: UUID) throws -> ConversationSession? {
+        lock.lock(); defer { lock.unlock() }
+        var found: ConversationSession?
+        try query(
+            """
+            SELECT id, title, started_at, ended_at, source
+            FROM sessions WHERE id=? LIMIT 1;
+            """,
+            binder: { bindText($0, 1, id.uuidString) }
+        ) { stmt in
+            let sid = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0)))!
+            let title = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
+            let started = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))
+            let ended: Date? = sqlite3_column_type(stmt, 3) == SQLITE_NULL
+                ? nil
+                : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+            let source = CaptureSource(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .meeting
+            found = ConversationSession(id: sid, title: title, startedAt: started, endedAt: ended, source: source)
+        }
+        guard var session = found else { return nil }
+        session.utterances = try loadUtterancesLocked(sessionID: session.id)
+        return session
+    }
+
+    public func recentDictations(limit: Int = 50) throws -> [DictationEvent] {
+        lock.lock(); defer { lock.unlock() }
+        var events: [DictationEvent] = []
+        try query(
+            """
+            SELECT id, created_at, text, verbatim_text, target_bundle_id, session_id
+            FROM dictations ORDER BY created_at DESC LIMIT ?;
+            """,
+            binder: { sqlite3_bind_int($0, 1, Int32(limit)) }
+        ) { stmt in
+            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0)))!
+            let created = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1))
+            let text = String(cString: sqlite3_column_text(stmt, 2))
+            let verbatim = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+            let bundle = sqlite3_column_text(stmt, 4).map { String(cString: $0) }
+            let sessionID = sqlite3_column_text(stmt, 5).flatMap { UUID(uuidString: String(cString: $0)) }
+            events.append(DictationEvent(
+                id: id,
+                createdAt: created,
+                text: text,
+                verbatimText: verbatim,
+                targetBundleID: bundle,
+                sessionID: sessionID
+            ))
+        }
+        return events
+    }
+
+    private func loadUtterancesLocked(sessionID: UUID) throws -> [Utterance] {
+        var utterances: [Utterance] = []
+        try query(
+            """
+            SELECT id, speaker_id, speaker_label, start_ms, end_ms, text, intended_text, words_json
+            FROM utterances
+            WHERE session_id=?
+            ORDER BY start_ms ASC, rowid ASC;
+            """,
+            binder: { bindText($0, 1, sessionID.uuidString) }
+        ) { stmt in
+            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0)))!
+            let speakerID = sqlite3_column_text(stmt, 1).flatMap { UUID(uuidString: String(cString: $0)) }
+            let label = String(cString: sqlite3_column_text(stmt, 2))
+            let startMs = Int(sqlite3_column_int(stmt, 3))
+            let endMs = Int(sqlite3_column_int(stmt, 4))
+            let text = String(cString: sqlite3_column_text(stmt, 5))
+            let intended = sqlite3_column_text(stmt, 6).map { String(cString: $0) }
+            var words: [TimedWord] = []
+            if let jsonC = sqlite3_column_text(stmt, 7) {
+                let json = String(cString: jsonC)
+                if let data = json.data(using: .utf8),
+                   let decoded = try? JSONDecoder().decode([TimedWord].self, from: data) {
+                    words = decoded
+                }
+            }
+            utterances.append(Utterance(
+                id: id,
+                speakerID: speakerID,
+                speakerLabel: label,
+                startMs: startMs,
+                endMs: endMs,
+                text: text,
+                intendedText: intended,
+                words: words
+            ))
+        }
+        return utterances
     }
 
     public func search(query text: String, limit: Int = 40) throws -> [KnowledgeHit] {

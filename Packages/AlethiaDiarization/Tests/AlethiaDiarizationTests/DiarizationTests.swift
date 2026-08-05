@@ -46,10 +46,26 @@ final class DiarizationServiceTests: XCTestCase {
         XCTAssertTrue(speakers.contains(where: { $0.displayName == "Sam" }))
     }
 
-    func testECAPABridgeResolvesModelPathWiring() {
-        let embedder = ECAPAGGMLEmbedder()
-        // Model may be absent locally; path resolution should still be non-crashing.
-        XCTAssertNoThrow(try embedder.embed(pcm: tone(freq: 440, samples: 2048, amp: 0.1), sampleRate: 16_000))
+    func testDifferentPitchTonesBecomeDifferentSpeakers() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("alethia-diar2-\(UUID().uuidString)")
+        let store = try KnowledgeStore(directory: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let gallery = try SpeakerGallery(store: store, matchThreshold: 0.92)
+        let service = DiarizationService(gallery: gallery, embedder: SpectralFingerprintEmbedder(), clusterThreshold: 0.55)
+
+        let pcmA = tone(freq: 120, samples: 24_000, amp: 0.25)
+        let pcmB = tone(freq: 260, samples: 24_000, amp: 0.25)
+        let out = try service.diarize(
+            pcm: pcmA + pcmB,
+            sampleRate: 16_000,
+            transcripts: [
+                (0, 1500, "hello from alice"),
+                (1500, 3000, "reply from bob")
+            ]
+        )
+        XCTAssertEqual(out.count, 2)
+        XCTAssertNotEqual(out[0].speakerID, out[1].speakerID)
     }
 }
 

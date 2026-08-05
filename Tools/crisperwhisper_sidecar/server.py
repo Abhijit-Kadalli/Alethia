@@ -27,7 +27,6 @@ app = Flask(__name__)
 
 _MODEL = None
 _STUB = os.environ.get("ALETHIA_CRISPER_STUB", "").strip() in ("1", "true", "yes")
-# small = fast dictation on Mac; override with turbo/medium/large as needed
 _MODEL_NAME = os.environ.get("ALETHIA_CRISPER_MODEL", "small").strip() or "small"
 _DEVICE = os.environ.get("ALETHIA_CRISPER_DEVICE", "auto").strip() or "auto"
 _LOAD_ERROR: str | None = None
@@ -84,7 +83,68 @@ def health():
     )
 
 
+def _word_text(w: Any) -> str:
+    return (getattr(w, "word", None) or getattr(w, "text", None) or "").strip()
+
+
+def _segments_from_words(words: list[Any], fallback_duration_s: float, gap_s: float = 0.45) -> list[dict]:
+    """Group timed words into phrase segments on pauses (for speaker turns)."""
+    usable = []
+    for w in words:
+        t = _word_text(w)
+        if not t:
+            continue
+        start = float(getattr(w, "start", 0.0) or 0.0)
+        end = float(getattr(w, "end", start) or start)
+        usable.append((start, end, t))
+    if not usable:
+        return []
+
+    segs: list[dict] = []
+    cur_words = [usable[0][2]]
+    cur_start = usable[0][0]
+    cur_end = usable[0][1]
+    for start, end, t in usable[1:]:
+        if start - cur_end >= gap_s or (end - cur_start) >= 3.0:
+            text = " ".join(cur_words).strip()
+            if text:
+                segs.append(
+                    {
+                        "start_ms": int(cur_start * 1000),
+                        "end_ms": max(int(cur_end * 1000), int(cur_start * 1000) + 1),
+                        "text": text,
+                    }
+                )
+            cur_words = [t]
+            cur_start = start
+            cur_end = end
+        else:
+            cur_words.append(t)
+            cur_end = max(cur_end, end)
+    text = " ".join(cur_words).strip()
+    if text:
+        segs.append(
+            {
+                "start_ms": int(cur_start * 1000),
+                "end_ms": max(int(cur_end * 1000), int(cur_start * 1000) + 1),
+                "text": text,
+            }
+        )
+    if not segs:
+        return []
+    # Ensure coverage end isn't before fallback when needed
+    if segs[-1]["end_ms"] < 1:
+        segs[-1]["end_ms"] = max(int(fallback_duration_s * 1000), 1)
+    return segs
+
+
 def _segments_from_result(result: Any, fallback_duration_s: float) -> list[dict]:
+    words = getattr(result, "words", None) or []
+    if words:
+        segs = _segments_from_words(list(words), fallback_duration_s)
+        if segs:
+            return segs
+
     text = (getattr(result, "text", None) or "").strip()
     if not text:
         return []
@@ -149,30 +209,58 @@ def transcribe():
         try:
             result = model.transcribe(tmp.name, **kwargs)
         except ModuleNotFoundError as exc:
-            if "ctranslate2" in str(exc):
+            if "ctranslate2" in str(exc) and kwargs.get("word_timestamps"):
                 kwargs["word_timestamps"] = False
-                kwargs["hallucination_mitigation"] = False
                 result = model.transcribe(tmp.name, **kwargs)
             else:
                 return jsonify({"error": str(exc), "stub": False}), 500
         except Exception as exc:  # noqa: BLE001
-            return jsonify({"error": str(exc), "stub": False}), 500
+            # Retry without word timestamps if attention path fails.
+            if kwargs.get("word_timestamps"):
+                try:
+                    kwargs["word_timestamps"] = False
+                    result = model.transcribe(tmp.name, **kwargs)
+                except Exception as exc2:  # noqa: BLE001
+                    return jsonify({"error": str(exc2), "stub": False}), 500
+            else:
+                return jsonify({"error": str(exc), "stub": False}), 500
 
     duration_s = 1.0
     if len(audio_bytes) > 44:
         duration_s = max((len(audio_bytes) - 44) / 2 / 16_000.0, 0.1)
+    duration_s = max(float(getattr(result, "duration", 0) or 0), duration_s)
 
     segments = _segments_from_result(result, duration_s)
     text = (getattr(result, "text", None) or "").strip()
     if not text and segments:
         text = " ".join(s["text"] for s in segments)
 
+    words_out: list[dict] = []
+    for w in getattr(result, "words", None) or []:
+        t = _word_text(w)
+        if not t:
+            continue
+        start = float(getattr(w, "start", 0.0) or 0.0)
+        end = float(getattr(w, "end", start) or start)
+        words_out.append(
+            {
+                "word": t,
+                "start_ms": int(start * 1000),
+                "end_ms": max(int(end * 1000), int(start * 1000) + 1),
+            }
+        )
+
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
-    print(f"transcribe mode={mode} audio={duration_s:.2f}s elapsed={elapsed_ms}ms chars={len(text)}", flush=True)
+    print(
+        f"transcribe mode={mode} audio={duration_s:.2f}s elapsed={elapsed_ms}ms "
+        f"segs={len(segments)} words={len(words_out)} chars={len(text)} word_ts={word_ts}",
+        flush=True,
+    )
     return jsonify(
         {
             "text": text,
             "segments": segments,
+            "words": words_out,
             "mode": mode,
             "stub": False,
             "elapsed_ms": elapsed_ms,
@@ -193,7 +281,6 @@ def main():
     from waitress import serve
 
     print(f"Listening on http://{host}:{port}", flush=True)
-    # More threads so health checks don't block behind a slow transcription.
     serve(app, host=host, port=port, threads=4)
 
 

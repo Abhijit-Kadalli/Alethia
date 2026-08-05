@@ -118,6 +118,8 @@ private struct HubWindowLifecycle: View {
 final class AppModel: ObservableObject {
     @Published var recordingState: RecordingState = .stopped
     @Published var sessions: [ConversationSession] = []
+    @Published var dictations: [DictationEvent] = []
+    @Published var selectedMeetingID: UUID?
     @Published var speakers: [SpeakerProfile] = []
     @Published var searchHits: [KnowledgeHit] = []
     @Published var statusMessage: String = "Ready"
@@ -125,6 +127,15 @@ final class AppModel: ObservableObject {
     @Published var isTranscribingDictation = false
     @Published var includeSystemAudio = true
     @Published var isTranscribingMeeting = false
+    /// Hub transcript display: verbatim (what was said) vs intended (cleaned).
+    @Published var hubShowVerbatim = true
+    /// Hub: show per-word timestamps under each utterance.
+    @Published var hubShowWordTimings = false
+
+    var selectedMeeting: ConversationSession? {
+        guard let selectedMeetingID else { return sessions.first }
+        return sessions.first(where: { $0.id == selectedMeetingID }) ?? sessions.first
+    }
 
     let store: KnowledgeStore
     let meeting: MeetingRecorder
@@ -198,7 +209,13 @@ final class AppModel: ObservableObject {
 
     func reload() {
         sessions = (try? store.recentSessions()) ?? []
+        dictations = (try? store.recentDictations()) ?? []
         speakers = (try? store.allSpeakers()) ?? []
+        if selectedMeetingID == nil {
+            selectedMeetingID = sessions.first?.id
+        } else if let id = selectedMeetingID, !sessions.contains(where: { $0.id == id }) {
+            selectedMeetingID = sessions.first?.id
+        }
     }
 
     func toggleMeetingRecording() {
@@ -250,7 +267,7 @@ final class AppModel: ObservableObject {
                 if recordingState != .recording, !dictationMic.isRunning {
                     try dictationMic.start()
                 }
-                try dictation.begin()
+                try dictation.begin(targetApp: NSWorkspace.shared.frontmostApplication)
                 isDictating = true
                 overlay.show(phase: .listening)
                 statusMessage = "Dictating… speak, then release Fn (or Finish)"
@@ -286,9 +303,10 @@ final class AppModel: ObservableObject {
                 isTranscribingDictation = false
                 overlay.hide()
                 if dictation.lastPasteNeedsManual {
-                    statusMessage = "Copied — press ⌘V (enable Accessibility for auto-paste): “\(event.text.prefix(48))”"
+                    statusMessage = "Copied — enable Accessibility for Alethia.app, then ⌘V: “\(event.text.prefix(48))”"
+                    permissions.openAccessibilitySettings()
                 } else {
-                    statusMessage = "Dictated: \(event.text.prefix(64))"
+                    statusMessage = "Pasted: \(event.text.prefix(64))"
                 }
                 reload()
             } catch {
@@ -318,39 +336,107 @@ final class AppModel: ObservableObject {
 
     private func finalizeMeeting(_ capture: MeetingCapture) async {
         do {
-            let transcripts = try await asr.transcribe(
+            async let verbatimTask = asr.transcribe(
                 pcm: capture.pcm,
                 sampleRate: capture.sampleRate,
-                mode: .verbatim
+                mode: .verbatim,
+                wordTimestamps: true
             )
+            async let intendedTask = asr.transcribe(
+                pcm: capture.pcm,
+                sampleRate: capture.sampleRate,
+                mode: .intended,
+                wordTimestamps: true
+            )
+            let transcripts = try await verbatimTask
+            let intended = (try? await intendedTask) ?? []
+            let allWords = transcripts.flatMap(\.words)
+
             let diarized = try diarizer.diarize(
                 pcm: capture.pcm,
                 sampleRate: capture.sampleRate,
-                transcripts: transcripts.map { ($0.startMs, $0.endMs, $0.text) }
+                transcripts: transcripts.map { ($0.startMs, $0.endMs, $0.text) },
+                intendedTranscripts: intended.map { ($0.startMs, $0.endMs, $0.text) }
             )
+
+            var utterances = diarized.map { d in
+                let words = allWords.filter { w in
+                    w.startMs >= d.startMs && w.startMs < max(d.endMs, d.startMs + 1)
+                }
+                return Utterance(
+                    speakerID: d.speakerID,
+                    speakerLabel: d.speakerLabel,
+                    startMs: d.startMs,
+                    endMs: d.endMs,
+                    text: d.text,
+                    intendedText: d.intendedText,
+                    words: words
+                )
+            }
+            if utterances.isEmpty {
+                utterances = transcripts.map {
+                    Utterance(
+                        startMs: $0.startMs,
+                        endMs: $0.endMs,
+                        text: $0.text,
+                        words: $0.words
+                    )
+                }
+            } else if utterances.allSatisfy(\.words.isEmpty), !allWords.isEmpty {
+                // Fallback: attach all words to the single span / distribute by time.
+                for i in utterances.indices {
+                    utterances[i].words = allWords.filter {
+                        $0.startMs >= utterances[i].startMs && $0.startMs < max(utterances[i].endMs, utterances[i].startMs + 1)
+                    }
+                }
+            }
+            // If intended came back as one blob, attach it across utterances for the toggle.
+            if utterances.allSatisfy({ $0.intendedText == nil }),
+               let fullIntended = intended.map(\.text).joined(separator: " ").nilIfEmptyTrimmed {
+                let words = fullIntended.split(whereSeparator: \.isWhitespace).map(String.init)
+                if !words.isEmpty, !utterances.isEmpty {
+                    let total = max(utterances.reduce(0) { $0 + max($1.endMs - $1.startMs, 1) }, 1)
+                    var cursor = 0
+                    for i in utterances.indices {
+                        let share = Double(max(utterances[i].endMs - utterances[i].startMs, 1)) / Double(total)
+                        var count = Int((share * Double(words.count)).rounded())
+                        if i == utterances.count - 1 { count = words.count - cursor }
+                        let end = min(cursor + max(count, 0), words.count)
+                        utterances[i].intendedText = words[cursor..<end].joined(separator: " ")
+                        cursor = end
+                    }
+                }
+            }
+
+            let stamp = capture.startedAt.formatted(date: .abbreviated, time: .shortened)
             var session = ConversationSession(
-                title: "Meeting",
+                title: "Meeting — \(stamp)",
                 startedAt: capture.startedAt,
                 endedAt: capture.endedAt,
                 source: includeSystemAudio ? .mixed : .meeting,
-                utterances: diarized.map {
-                    Utterance(
-                        speakerID: $0.speakerID,
-                        speakerLabel: $0.speakerLabel,
-                        startMs: $0.startMs,
-                        endMs: $0.endMs,
-                        text: $0.text
-                    )
-                }
+                utterances: utterances
             )
-            if let first = session.utterances.first {
-                session.title = String(first.text.prefix(48))
+            if let first = utterances.first, !first.text.isEmpty {
+                session.title = String(first.text.prefix(56))
             }
+            guard !utterances.isEmpty else {
+                statusMessage = "Meeting ended — no speech detected"
+                return
+            }
+            let speakerCount = Set(utterances.compactMap(\.speakerID)).count
             try store.saveSession(session)
-            statusMessage = "Meeting saved"
+            selectedMeetingID = session.id
+            statusMessage = "Meeting saved · \(utterances.count) lines · \(max(speakerCount, 1)) speakers"
             reload()
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+}
+
+private extension String {
+    var nilIfEmptyTrimmed: String? {
+        let t = trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
     }
 }

@@ -38,5 +38,10 @@ final class KnowledgeStoreTests: XCTestCase {
         let recent = try store.recentSessions(limit: 5)
         XCTAssertEqual(recent.count, 1)
         XCTAssertEqual(recent.first?.title, "Planning")
+        XCTAssertEqual(recent.first?.utterances.count, 1)
+        XCTAssertEqual(recent.first?.utterances.first?.text, "shipping the alethia roadmap next week")
+
+        let dictations = try store.recentDictations(limit: 5)
+        XCTAssertEqual(dictations.count, 1)
     }
 }

@@ -4,11 +4,26 @@ import AlethiaCore
 public protocol SpeechRecognizing: Sendable {
     func transcribe(pcm: [Float], sampleRate: Double) async throws -> [TranscriptSegment]
     func transcribe(pcm: [Float], sampleRate: Double, mode: ASRMode) async throws -> [TranscriptSegment]
+    func transcribe(
+        pcm: [Float],
+        sampleRate: Double,
+        mode: ASRMode,
+        wordTimestamps: Bool
+    ) async throws -> [TranscriptSegment]
 }
 
 public extension SpeechRecognizing {
     func transcribe(pcm: [Float], sampleRate: Double, mode: ASRMode) async throws -> [TranscriptSegment] {
-        // Default: ignore mode (stubs / legacy).
+        try await transcribe(pcm: pcm, sampleRate: sampleRate, mode: mode, wordTimestamps: false)
+    }
+
+    func transcribe(
+        pcm: [Float],
+        sampleRate: Double,
+        mode: ASRMode,
+        wordTimestamps: Bool
+    ) async throws -> [TranscriptSegment] {
+        // Default: ignore wordTimestamps if not overridden.
         try await transcribe(pcm: pcm, sampleRate: sampleRate)
     }
 }
@@ -17,11 +32,13 @@ public struct TranscriptSegment: Sendable, Hashable {
     public var startMs: Int
     public var endMs: Int
     public var text: String
+    public var words: [TimedWord]
 
-    public init(startMs: Int, endMs: Int, text: String) {
+    public init(startMs: Int, endMs: Int, text: String, words: [TimedWord] = []) {
         self.startMs = startMs
         self.endMs = endMs
         self.text = text
+        self.words = words
     }
 }
 
@@ -52,8 +69,14 @@ public final class ASRService: Sendable {
     public func transcribe(
         pcm: [Float],
         sampleRate: Double = 16_000,
-        mode: ASRMode = .intended
+        mode: ASRMode = .intended,
+        wordTimestamps: Bool = false
     ) async throws -> [TranscriptSegment] {
-        try await recognizer.transcribe(pcm: pcm, sampleRate: sampleRate, mode: mode)
+        try await recognizer.transcribe(
+            pcm: pcm,
+            sampleRate: sampleRate,
+            mode: mode,
+            wordTimestamps: wordTimestamps
+        )
     }
 }

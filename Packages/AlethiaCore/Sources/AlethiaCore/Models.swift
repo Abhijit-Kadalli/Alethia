@@ -33,13 +33,32 @@ public enum CaptureSource: String, Codable, Sendable {
     case ambient
 }
 
+public struct TimedWord: Identifiable, Codable, Sendable, Hashable {
+    public var id: UUID
+    public var word: String
+    public var startMs: Int
+    public var endMs: Int
+
+    public init(id: UUID = UUID(), word: String, startMs: Int, endMs: Int) {
+        self.id = id
+        self.word = word
+        self.startMs = startMs
+        self.endMs = endMs
+    }
+}
+
 public struct Utterance: Identifiable, Codable, Sendable, Hashable {
     public let id: UUID
     public var speakerID: UUID?
     public var speakerLabel: String
     public var startMs: Int
     public var endMs: Int
+    /// Verbatim (what was said).
     public var text: String
+    /// Intended / cleaned (what was meant), when available.
+    public var intendedText: String?
+    /// Per-word timings (verbatim when available).
+    public var words: [TimedWord]
 
     public init(
         id: UUID = UUID(),
@@ -47,7 +66,9 @@ public struct Utterance: Identifiable, Codable, Sendable, Hashable {
         speakerLabel: String = "Speaker 1",
         startMs: Int,
         endMs: Int,
-        text: String
+        text: String,
+        intendedText: String? = nil,
+        words: [TimedWord] = []
     ) {
         self.id = id
         self.speakerID = speakerID
@@ -55,6 +76,20 @@ public struct Utterance: Identifiable, Codable, Sendable, Hashable {
         self.startMs = startMs
         self.endMs = endMs
         self.text = text
+        self.intendedText = intendedText
+        self.words = words
+    }
+
+    public func displayText(verbatim: Bool) -> String {
+        if verbatim { return text }
+        return intendedText?.nilIfEmpty ?? text
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        let t = trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
     }
 }
 
@@ -82,6 +117,8 @@ public struct DictationEvent: Identifiable, Codable, Sendable, Hashable {
     public let id: UUID
     public var createdAt: Date
     public var text: String
+    /// Verbatim transcript when available (hub archive); `text` is what was pasted (intended).
+    public var verbatimText: String?
     public var targetBundleID: String?
     public var sessionID: UUID?
 
@@ -89,12 +126,14 @@ public struct DictationEvent: Identifiable, Codable, Sendable, Hashable {
         id: UUID = UUID(),
         createdAt: Date = Date(),
         text: String,
+        verbatimText: String? = nil,
         targetBundleID: String? = nil,
         sessionID: UUID? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
         self.text = text
+        self.verbatimText = verbatimText
         self.targetBundleID = targetBundleID
         self.sessionID = sessionID
     }
