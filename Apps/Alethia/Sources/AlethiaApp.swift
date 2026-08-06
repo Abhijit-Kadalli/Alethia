@@ -18,10 +18,14 @@ struct AlethiaApp: App {
     @StateObject private var appModel = AppModel()
 
     var body: some Scene {
-        MenuBarExtra("Alethia", systemImage: appModel.menuBarSymbol) {
+        MenuBarExtra {
             MenuBarView()
                 .environmentObject(appModel)
                 .background(OpenWindowRegistrar())
+        } label: {
+            Image(nsImage: appModel.menuBarNSImage)
+                .renderingMode(.template)
+                .accessibilityLabel(appModel.menuBarAccessibilityLabel)
         }
         .menuBarExtraStyle(.window)
 
@@ -116,23 +120,35 @@ private struct HubWindowLifecycle: View {
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var recordingState: RecordingState = .stopped
+    @Published var recordingState: RecordingState = .stopped {
+        didSet { syncMenuBarAnimation() }
+    }
     @Published var sessions: [ConversationSession] = []
     @Published var dictations: [DictationEvent] = []
     @Published var selectedMeetingID: UUID?
     @Published var speakers: [SpeakerProfile] = []
     @Published var searchHits: [KnowledgeHit] = []
     @Published var statusMessage: String = "Ready"
-    @Published var isDictating = false
-    @Published var isTranscribingDictation = false
+    @Published var isDictating = false {
+        didSet { syncMenuBarAnimation() }
+    }
+    @Published var isTranscribingDictation = false {
+        didSet { syncMenuBarAnimation() }
+    }
     @Published var includeSystemAudio = true
-    @Published var isTranscribingMeeting = false
+    @Published var isTranscribingMeeting = false {
+        didSet { syncMenuBarAnimation() }
+    }
     /// Hub transcript display: verbatim (what was said) vs intended (cleaned).
     @Published var hubShowVerbatim = true
     /// Hub: show per-word timestamps under each utterance.
     @Published var hubShowWordTimings = false
-    @Published var isGeneratingNotes = false
+    @Published var isGeneratingNotes = false {
+        didSet { syncMenuBarAnimation() }
+    }
     @Published var notesError: String?
+    /// Animation frame for the custom menu-bar mark (idle is static).
+    @Published var menuBarFrame: Int = 0
 
     var selectedMeeting: ConversationSession? {
         guard let selectedMeetingID else { return sessions.first }
@@ -150,12 +166,29 @@ final class AppModel: ObservableObject {
     let hotkey = HotkeyMonitor()
     let overlay = DictationOverlayController()
 
-    var menuBarSymbol: String {
-        if isTranscribingDictation || isTranscribingMeeting { return "hourglass" }
-        if isDictating { return "mic.fill" }
+    private var menuBarAnimationTimer: Timer?
+
+    var menuBarIconState: AlethiaMenuBarIconState {
+        if isTranscribingDictation || isTranscribingMeeting || isGeneratingNotes {
+            return .processing
+        }
+        if isDictating { return .dictating }
         switch recordingState {
-        case .recording: return "record.circle.fill"
-        case .stopped: return "waveform.circle"
+        case .recording: return .meetingRecording
+        case .stopped: return .idle
+        }
+    }
+
+    var menuBarNSImage: NSImage {
+        AlethiaMenuBarIcon.image(state: menuBarIconState, frame: menuBarFrame)
+    }
+
+    var menuBarAccessibilityLabel: String {
+        switch menuBarIconState {
+        case .idle: return "Alethia"
+        case .dictating: return "Alethia — dictating"
+        case .meetingRecording: return "Alethia — recording meeting"
+        case .processing: return "Alethia — processing"
         }
     }
 
@@ -175,10 +208,39 @@ final class AppModel: ObservableObject {
                 self?.routePCM(samples)
             }
             wireHotkey()
+            dictation.willPaste = { [weak self] in
+                self?.overlay.hide()
+            }
             reload()
+            syncMenuBarAnimation()
             Task { await self.bootstrapASR() }
         } catch {
             fatalError("Failed to start Alethia: \(error)")
+        }
+    }
+
+    /// Keep the status-item mark animating while dictating / recording / processing.
+    func syncMenuBarAnimation() {
+        let shouldAnimate: Bool = {
+            switch menuBarIconState {
+            case .idle: return false
+            case .dictating, .meetingRecording, .processing: return true
+            }
+        }()
+        if shouldAnimate {
+            guard menuBarAnimationTimer == nil else { return }
+            let timer = Timer(timeInterval: 1.0 / 8.0, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.menuBarFrame = (self.menuBarFrame + 1) % 120
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            menuBarAnimationTimer = timer
+        } else {
+            menuBarAnimationTimer?.invalidate()
+            menuBarAnimationTimer = nil
+            menuBarFrame = 0
         }
     }
 
@@ -199,7 +261,12 @@ final class AppModel: ObservableObject {
         let axOK = permissions.accessibilityTrusted(prompt: false)
         var parts: [String] = []
         parts.append(asrOK ? "ASR: CrisperWhisper" : "ASR: offline — run ./Scripts/setup-crisperwhisper.sh")
-        parts.append(axOK ? "AX: on" : "AX: off (menu dictation works; Fn+auto-paste need AX)")
+        if axOK {
+            parts.append("AX: on · hold Fn or Right ⌥ to dictate")
+            hotkey.refreshEventTap()
+        } else {
+            parts.append(PermissionGate.accessibilityRepairHint)
+        }
         statusMessage = parts.joined(separator: " · ")
     }
 
@@ -305,10 +372,15 @@ final class AppModel: ObservableObject {
                 isTranscribingDictation = false
                 overlay.hide()
                 if dictation.lastPasteNeedsManual {
-                    statusMessage = "Copied — enable Accessibility for Alethia.app, then ⌘V: “\(event.text.prefix(48))”"
-                    permissions.openAccessibilitySettings()
+                    if permissions.accessibilityTrusted(prompt: false) {
+                        statusMessage = "Copied (couldn’t auto-paste into the target app) — press ⌘V: “\(event.text.prefix(48))”"
+                    } else {
+                        statusMessage = "Copied — \(PermissionGate.accessibilityRepairHint)"
+                        _ = permissions.accessibilityTrusted(prompt: true)
+                    }
                 } else {
-                    statusMessage = "Pasted: \(event.text.prefix(64))"
+                    let via = dictation.lastPasteMethod.map { " via \($0)" } ?? ""
+                    statusMessage = "Pasted\(via): \(event.text.prefix(64))"
                 }
                 reload()
             } catch {

@@ -44,6 +44,10 @@ struct MenuBarView: View {
             Button("Open Accessibility Settings") {
                 model.permissions.openAccessibilitySettings()
             }
+            Text("Hold Fn (🌐) or Right ⌥ to dictate. After rebuilding the app, re-add Alethia in Accessibility.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Button("Quit Alethia") { NSApplication.shared.terminate(nil) }
         }
         .padding(12)
@@ -856,10 +860,10 @@ struct OnboardingView: View {
             Text("Local meeting transcripts and speak-to-type. Label people as you go; optional OpenRouter notes stay under your control.")
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
-                Label("Hold Fn — dictate into any app", systemImage: "keyboard")
+                Label("Hold Fn — dictate into any app", systemImage: "mic.fill")
                 Label("Menu bar — start/stop meeting recording", systemImage: "record.circle")
                 Label("Hub — Person 1 / Person 2, labels, and notes", systemImage: "person.2")
-                Label("Microphone — meetings & dictation", systemImage: "mic")
+                Label("Microphone — meetings & dictation", systemImage: "waveform")
                 Label("Accessibility — auto-paste dictated text", systemImage: "accessibility")
                 Label("Screen Recording — optional system audio", systemImage: "rectangle.dashed.badge.record")
             }

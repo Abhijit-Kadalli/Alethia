@@ -26,16 +26,27 @@ fi
 
 swift build -c "$CONFIG"
 
+# Ensure app icon exists (from alethia-logo.svg).
+ICON_SRC="$ROOT/Apps/Alethia/Resources/AppIcon.icns"
+if [[ ! -f "$ICON_SRC" ]]; then
+  "$ROOT/Scripts/build-app-icon.sh"
+fi
+
 BIN="$ROOT/.build/$CONFIG/Alethia"
 STAGING="$ROOT/.build/Alethia.app"
 CONTENTS="$STAGING/Contents"
 MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
 
 rm -rf "$STAGING"
-mkdir -p "$MACOS"
+mkdir -p "$MACOS" "$RESOURCES"
 cp "$BIN" "$MACOS/Alethia"
 cp "$ROOT/Apps/Alethia/Resources/Info.plist" "$CONTENTS/Info.plist"
+cp "$ICON_SRC" "$RESOURCES/AppIcon.icns"
+# Keep SVG assets alongside for reference / future UI use.
+cp "$ROOT/Apps/Alethia/Resources/"*.svg "$RESOURCES/" 2>/dev/null || true
 chmod +x "$MACOS/Alethia"
+chmod +x "$ROOT/Scripts/build-app-icon.sh" 2>/dev/null || true
 
 codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$STAGING"
 

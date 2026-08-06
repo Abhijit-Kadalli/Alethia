@@ -34,7 +34,11 @@ public final class DictationOverlayController: ObservableObject {
             panel.backgroundColor = .clear
             panel.isOpaque = false
             panel.hasShadow = true
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel.hidesOnDeactivate = false
+            panel.becomesKeyOnlyIfNeeded = true
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            // Never become key — otherwise we steal focus from the dictation target.
+            panel.styleMask.insert(.nonactivatingPanel)
             self.panel = panel
         }
         positionCentered()

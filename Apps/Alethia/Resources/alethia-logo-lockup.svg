@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" role="img" aria-labelledby="title desc">
+  <title id="title">Alethia</title>
+  <desc id="desc">Alethia wordmark with listening-signal mark.</desc>
+
+  <defs>
+    <linearGradient id="field" x1="8" y1="8" x2="72" y2="88" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#17352F"/>
+      <stop offset="100%" stop-color="#0B1F1C"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="28" y1="64" x2="60" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E8D7B8"/>
+      <stop offset="100%" stop-color="#F4F1EA"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mark -->
+  <rect x="0" y="8" width="80" height="80" rx="18" fill="url(#field)"/>
+  <path
+    d="M21 58c0-10.5 8.5-19 19-19s19 8.5 19 19"
+    fill="none"
+    stroke="#2F5A51"
+    stroke-width="2.4"
+    stroke-linecap="round"
+  />
+  <path
+    d="M15 62c0-14.5 11.8-26.2 26.2-26.2S67.4 47.5 67.4 62"
+    fill="none"
+    stroke="#2F5A51"
+    stroke-width="2.4"
+    stroke-linecap="round"
+    opacity="0.45"
+  />
+  <g fill="url(#signal)">
+    <rect x="26" y="44" width="5" height="20" rx="2.5"/>
+    <rect x="34.5" y="36" width="5" height="28" rx="2.5"/>
+    <rect x="43" y="30" width="5.5" height="36" rx="2.75"/>
+    <rect x="52" y="39" width="5" height="25" rx="2.5"/>
+  </g>
+  <circle cx="58" cy="30" r="3.5" fill="#E8D7B8"/>
+
+  <!-- Wordmark -->
+  <text
+    x="104"
+    y="62"
+    fill="#0B1F1C"
+    font-family="Iowan Old Style, Palatino Linotype, Palatino, Georgia, serif"
+    font-size="42"
+    font-weight="600"
+    letter-spacing="0.5"
+  >Alethia</text>
+</svg>

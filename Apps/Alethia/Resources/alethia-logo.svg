@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Alethia</title>
+  <desc id="desc">Alethia mark — a listening arc resolving into clear speech.</desc>
+
+  <defs>
+    <linearGradient id="field" x1="18" y1="12" x2="110" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#17352F"/>
+      <stop offset="100%" stop-color="#0B1F1C"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="40" y1="86" x2="88" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E8D7B8"/>
+      <stop offset="100%" stop-color="#F4F1EA"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App tile -->
+  <rect width="128" height="128" rx="28" fill="url(#field)"/>
+
+  <!-- Soft listening rings -->
+  <path
+    d="M34 78c0-16.5 13.5-30 30-30s30 13.5 30 30"
+    fill="none"
+    stroke="#2F5A51"
+    stroke-width="3.5"
+    stroke-linecap="round"
+    opacity="0.9"
+  />
+  <path
+    d="M24 84c0-23.2 18.8-42 42-42s42 18.8 42 42"
+    fill="none"
+    stroke="#2F5A51"
+    stroke-width="3.5"
+    stroke-linecap="round"
+    opacity="0.45"
+  />
+
+  <!-- Clear-speech glyph: waveform resolving to a centered spine -->
+  <g fill="url(#signal)" fill-rule="evenodd">
+    <rect x="42" y="58" width="7" height="28" rx="3.5"/>
+    <rect x="54" y="46" width="7" height="40" rx="3.5"/>
+    <rect x="66" y="38" width="8" height="52" rx="4"/>
+    <rect x="79" y="50" width="7" height="36" rx="3.5"/>
+  </g>
+
+  <!-- Unveiling highlight -->
+  <circle cx="90" cy="40" r="5.5" fill="#E8D7B8" opacity="0.95"/>
+</svg>

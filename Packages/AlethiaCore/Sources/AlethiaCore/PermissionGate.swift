@@ -10,6 +10,10 @@ public enum PermissionStatus: String, Sendable {
 }
 
 public final class PermissionGate: @unchecked Sendable {
+    /// Prevents the system AX dialog + Settings jump from firing on every failed paste.
+    private let promptLock = NSLock()
+    private var didPromptAccessibilityThisLaunch = false
+
     public init() {}
 
     public func microphoneStatus() -> PermissionStatus {
@@ -27,15 +31,28 @@ public final class PermissionGate: @unchecked Sendable {
     }
 
     public func accessibilityTrusted(prompt: Bool = false) -> Bool {
-        // Prefer the non-prompting check first; prompting every call spams the user.
         if AXIsProcessTrusted() { return true }
         guard prompt else { return false }
+        promptLock.lock()
+        let already = didPromptAccessibilityThisLaunch
+        if !already { didPromptAccessibilityThisLaunch = true }
+        promptLock.unlock()
+        guard !already else { return false }
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    /// One Settings jump per launch max (call after an explicit user action or first AX miss).
+    public func openAccessibilitySettingsIfNeeded() {
+        promptLock.lock()
+        let already = didPromptAccessibilityThisLaunch
+        if !already { didPromptAccessibilityThisLaunch = true }
+        promptLock.unlock()
+        // Always allow an explicit menu-button open; only gate the auto-jump via accessibilityTrusted(prompt:).
+        openAccessibilitySettings()
+    }
+
     public func openAccessibilitySettings() {
-        // macOS 13+ Settings deep link; fall back to legacy pane.
         let candidates = [
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
@@ -61,8 +78,18 @@ public final class PermissionGate: @unchecked Sendable {
         if accessibilityTrusted(prompt: false) { return }
         if prompt {
             _ = accessibilityTrusted(prompt: true)
-            openAccessibilitySettings()
+            // Only open Settings on the first miss this launch.
+            promptLock.lock()
+            let first = didPromptAccessibilityThisLaunch
+            promptLock.unlock()
+            if first {
+                openAccessibilitySettings()
+            }
         }
         throw AlethiaError.accessibilityPermissionDenied
     }
+
+    /// Clear copy for the menu-bar status line when AX is off after a rebuild.
+    public static let accessibilityRepairHint =
+        "AX off for this build — System Settings → Privacy → Accessibility: remove Alethia, then add ~/Applications/Alethia.app and toggle ON"
 }
