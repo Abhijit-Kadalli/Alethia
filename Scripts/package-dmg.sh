@@ -9,6 +9,7 @@ ICON="$ROOT/Apps/Alethia/Resources/AppIcon.icns"
 BUNDLE_ID="app.alethia.macos"
 CONFIGURATION="release"
 BUILD_ARCH="${ALETHIA_BUILD_ARCH:-}"
+BUNDLE_SIDECAR="${ALETHIA_BUNDLE_SIDECAR:-1}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "package-dmg.sh must run on macOS." >&2
@@ -57,6 +58,16 @@ cp "$PLIST" "$CONTENTS/Info.plist"
 cp "$ICON" "$CONTENTS/Resources/AppIcon.icns"
 cp "$ROOT"/Apps/Alethia/Resources/*.svg "$CONTENTS/Resources/"
 chmod +x "$CONTENTS/MacOS/Alethia"
+
+if [[ "$BUNDLE_SIDECAR" == "1" || "$BUNDLE_SIDECAR" == "true" ]]; then
+  SIDECAR="$CONTENTS/Resources/Sidecar"
+  "$ROOT/Scripts/build-sidecar-runtime.sh" "$WORK_DIR/sidecar-runtime"
+  mkdir -p "$SIDECAR"
+  mv "$WORK_DIR/sidecar-runtime/python" "$SIDECAR/python"
+  cp "$ROOT/Tools/crisperwhisper_sidecar/server.py" "$SIDECAR/server.py"
+  cp "$ROOT/Scripts/start-bundled-sidecar.sh" "$SIDECAR/start-sidecar.sh"
+  chmod +x "$SIDECAR/start-sidecar.sh" "$SIDECAR/python/bin/python3"
+fi
 
 # Ad-hoc signing keeps the bundle internally consistent. A future release can
 # provide ALETHIA_CODESIGN_IDENTITY when a Developer ID certificate is available.

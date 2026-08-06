@@ -15,6 +15,7 @@ Env:
   ALETHIA_CRISPER_STUB=1 — no model load; returns deterministic stub text
   ALETHIA_ECAPA=0 — disable SpeechBrain ECAPA (spectral fallback only)
   ALETHIA_ECAPA_PRELOAD=0 — skip ECAPA warm-load at startup
+  ALETHIA_MODEL_DIR — persistent model root (defaults to ~/.cache/alethia)
 """
 
 from __future__ import annotations
@@ -42,6 +43,10 @@ _ECAPA_ENABLED = os.environ.get("ALETHIA_ECAPA", "1").strip().lower() not in ("0
 _ECAPA_SOURCE = os.environ.get(
     "ALETHIA_ECAPA_MODEL", "speechbrain/spkrec-ecapa-voxceleb"
 ).strip() or "speechbrain/spkrec-ecapa-voxceleb"
+_MODEL_DIR = os.path.expanduser(os.environ.get("ALETHIA_MODEL_DIR", "~/.cache/alethia"))
+_ECAPA_CACHE = os.path.expanduser(
+    os.environ.get("ALETHIA_ECAPA_CACHE", os.path.join(_MODEL_DIR, "ecapa-voxceleb"))
+)
 
 
 def _resolve_device() -> str:
@@ -73,6 +78,7 @@ def get_model():
                 backend=backend,
                 device=device,
                 compute_type="float16" if device in ("mps", "cuda") else "float32",
+                cache_dir=os.path.join(_MODEL_DIR, "crisperwhisper"),
             )
             _LOAD_ERROR = None
         except Exception as exc:  # noqa: BLE001
@@ -97,7 +103,7 @@ def get_ecapa():
 
             device = _resolve_device()
             # Some SpeechBrain ops are flaky on MPS — fall back to CPU if needed.
-            savedir = os.path.expanduser("~/.cache/alethia/ecapa-voxceleb")
+            savedir = _ECAPA_CACHE
             os.makedirs(savedir, exist_ok=True)
             print(f"Loading ECAPA source={_ECAPA_SOURCE} device={device}", flush=True)
             try:

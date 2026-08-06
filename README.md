@@ -59,12 +59,18 @@ Fixtures/               Short WAV for CI smoke
 
 ## Requirements
 
+For the release DMG:
+
 - Apple Silicon Mac, macOS 14+
-- Xcode 15+ / Swift 5.9+
-- Python 3.10+ (CrisperWhisper sidecar)
+- Internet access on first launch to download approximately 550 MB of model weights
+- Approximately 1.5 GB free disk space for the app, runtime, and model cache
 - Microphone permission
 - Accessibility permission (dictation paste + global Fn)
 - Screen Recording (system audio for meetings, macOS 14.4+)
+
+The release app bundles its Python/CrisperWhisper runtime. Model weights download on first launch into `~/Library/Application Support/Alethia/Models`; no repository clone or system Python installation is required.
+
+Building from source additionally requires Xcode 15+ / Swift 5.9+ and Python 3.10+.
 
 ## Quick start (Mac)
 

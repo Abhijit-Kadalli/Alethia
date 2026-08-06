@@ -18,7 +18,6 @@ export ALETHIA_CRISPER_PORT="${ALETHIA_CRISPER_PORT:-8765}"
 export ALETHIA_CRISPER_MODEL="${ALETHIA_CRISPER_MODEL:-small}"
 export ALETHIA_CRISPER_BACKEND="${ALETHIA_CRISPER_BACKEND:-transformers}"
 export ALETHIA_CRISPER_DEVICE="${ALETHIA_CRISPER_DEVICE:-auto}"
-# Never inherit a leftover stub flag from the parent shell.
-unset ALETHIA_CRISPER_STUB
-
+# ALETHIA_CRISPER_STUB is intentionally preserved for CI. Real app launchers
+# explicitly unset it before starting this script.
 exec "$PY" "$SIDECAR/server.py"

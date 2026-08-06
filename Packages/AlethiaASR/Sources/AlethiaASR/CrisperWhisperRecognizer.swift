@@ -83,7 +83,7 @@ public struct CrisperWhisperRecognizer: SpeechRecognizing {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch {
             throw AlethiaError.modelMissing(
-                "CrisperWhisper sidecar unreachable at \(configuration.baseURL.absoluteString). Run ./Scripts/setup-crisperwhisper.sh && ./Scripts/start-crisper-sidecar.sh"
+                "Alethia's speech engine is unavailable at \(configuration.baseURL.absoluteString). Reopen Alethia to retry model setup."
             )
         }
 
@@ -121,7 +121,7 @@ public struct CrisperWhisperRecognizer: SpeechRecognizing {
                 .map { ["1", "true", "yes"].contains($0.lowercased()) } ?? false
             if !allow {
                 throw AlethiaError.modelMissing(
-                    "CrisperWhisper sidecar is in STUB mode. Run ./Scripts/setup-crisperwhisper.sh (without ALETHIA_CRISPER_STUB) then ./Scripts/run-app.sh"
+                    "Alethia's speech engine is running in test mode. Reopen the release app to start the bundled engine."
                 )
             }
         }
@@ -209,6 +209,9 @@ public enum CrisperSidecarLauncher {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [script.path]
+        var environment = ProcessInfo.processInfo.environment
+        environment.removeValue(forKey: "ALETHIA_CRISPER_STUB")
+        process.environment = environment
         if let handle = try? FileHandle(forWritingTo: {
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
             return logURL
@@ -224,8 +227,8 @@ public enum CrisperSidecarLauncher {
         } catch {
             return false
         }
-        // Model load can take ~15–60s the first time.
-        for _ in 0..<120 {
+        // First launch downloads model weights and can take several minutes.
+        for _ in 0..<1_200 {
             try? await Task.sleep(nanoseconds: 500_000_000)
             if await CrisperWhisperRecognizer.isHealthy(baseURL: configuration.baseURL) {
                 return true
@@ -234,7 +237,23 @@ public enum CrisperSidecarLauncher {
         return false
     }
 
+    public static func hasBundledRuntime(fileManager: FileManager = .default) -> Bool {
+        bundledStartScript(fileManager: fileManager) != nil
+    }
+
+    private static func bundledStartScript(fileManager: FileManager) -> URL? {
+        guard let resources = Bundle.main.resourceURL else { return nil }
+        let script = resources.appendingPathComponent("Sidecar/start-sidecar.sh")
+        guard fileManager.fileExists(atPath: script.path) else { return nil }
+        return script
+    }
+
     private static func resolveStartScript(fileManager: FileManager) -> URL? {
+        if let bundled = bundledStartScript(fileManager: fileManager) {
+            return bundled
+        }
+
+        // Repository fallbacks keep local development and tests working.
         let env = ProcessInfo.processInfo.environment
         var roots: [URL] = []
         if let root = env["ALETHIA_ROOT"], !root.isEmpty {

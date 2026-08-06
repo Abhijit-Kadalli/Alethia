@@ -22,7 +22,7 @@ jobs:
   dmg:
     name: Build and publish DMG
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Resolve release tag
         id: release
@@ -63,9 +63,22 @@ jobs:
           xcodebuild -version
           uname -a
 
+      - name: Cache standalone Python download
+        uses: actions/cache@v4
+        with:
+          path: .build/downloads
+          key: sidecar-python-${{ runner.os }}-arm64-v1
+
+      - name: Cache Python packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/pip
+          key: sidecar-pip-${{ runner.os }}-arm64-${{ hashFiles('Tools/crisperwhisper_sidecar/requirements.txt', 'Scripts/build-sidecar-runtime.sh') }}
+
       - name: Build DMG
         env:
           ALETHIA_BUILD_ARCH: arm64
+          ALETHIA_BUNDLE_SIDECAR: "1"
         run: ./Scripts/package-dmg.sh release
 
       - name: Upload workflow artifact

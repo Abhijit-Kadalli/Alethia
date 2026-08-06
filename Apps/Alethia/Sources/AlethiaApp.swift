@@ -252,7 +252,18 @@ final class AppModel: ObservableObject {
     }
 
     private func bootstrapASR() async {
-        _ = await CrisperSidecarLauncher.ensureRunning()
+        if CrisperSidecarLauncher.hasBundledRuntime() {
+            statusMessage = "Preparing on-device speech models… first launch downloads about 550 MB"
+        } else {
+            statusMessage = "Starting local speech engine…"
+        }
+        let ready = await CrisperSidecarLauncher.ensureRunning()
+        if !ready {
+            statusMessage = CrisperSidecarLauncher.hasBundledRuntime()
+                ? "Speech model setup failed. Check your internet connection, then reopen Alethia."
+                : "ASR offline — run ./Scripts/setup-crisperwhisper.sh"
+            return
+        }
         await refreshStatus()
     }
 
@@ -260,7 +271,10 @@ final class AppModel: ObservableObject {
         let asrOK = await CrisperWhisperRecognizer.isHealthy()
         let axOK = permissions.accessibilityTrusted(prompt: false)
         var parts: [String] = []
-        parts.append(asrOK ? "ASR: CrisperWhisper" : "ASR: offline — run ./Scripts/setup-crisperwhisper.sh")
+        let offlineMessage = CrisperSidecarLauncher.hasBundledRuntime()
+            ? "ASR: preparing models"
+            : "ASR: offline — run ./Scripts/setup-crisperwhisper.sh"
+        parts.append(asrOK ? "ASR: CrisperWhisper" : offlineMessage)
         if axOK {
             parts.append("AX: on · hold Fn or Right ⌥ to dictate")
             hotkey.refreshEventTap()
@@ -325,10 +339,14 @@ final class AppModel: ObservableObject {
                 guard !isDictating else { return }
                 try await permissions.requireMicrophone()
                 if !(await CrisperWhisperRecognizer.isHealthy()) {
-                    statusMessage = "Starting ASR…"
+                    statusMessage = CrisperSidecarLauncher.hasBundledRuntime()
+                        ? "Preparing speech models…"
+                        : "Starting ASR…"
                     let up = await CrisperSidecarLauncher.ensureRunning()
                     guard up else {
-                        statusMessage = "ASR offline — run ./Scripts/run-app.sh"
+                        statusMessage = CrisperSidecarLauncher.hasBundledRuntime()
+                            ? "Speech model setup failed. Check your internet connection and retry."
+                            : "ASR offline — run ./Scripts/run-app.sh"
                         return
                     }
                 }
