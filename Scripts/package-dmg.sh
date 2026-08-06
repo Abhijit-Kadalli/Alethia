@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT_DIR="${1:-$ROOT/release}"
 PLIST="$ROOT/Apps/Alethia/Resources/Info.plist"
 ICON="$ROOT/Apps/Alethia/Resources/AppIcon.icns"
+ENTITLEMENTS="$ROOT/Apps/Alethia/Resources/Alethia.entitlements"
 BUNDLE_ID="app.alethia.macos"
 CONFIGURATION="release"
 BUILD_ARCH="${ALETHIA_BUILD_ARCH:-}"
@@ -72,9 +73,15 @@ fi
 # Ad-hoc signing keeps the bundle internally consistent. A future release can
 # provide ALETHIA_CODESIGN_IDENTITY when a Developer ID certificate is available.
 SIGNING_IDENTITY="${ALETHIA_CODESIGN_IDENTITY:--}"
-codesign --force --deep --options runtime --sign "$SIGNING_IDENTITY" \
-  --identifier "$BUNDLE_ID" "$APP"
+codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" \
+  --sign "$SIGNING_IDENTITY" --identifier "$BUNDLE_ID" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
+
+SIGNED_ENTITLEMENTS="$(codesign -d --entitlements :- "$APP" 2>/dev/null)"
+if ! grep -q '<key>com.apple.security.device.audio-input</key>' <<<"$SIGNED_ENTITLEMENTS"; then
+  echo "Packaged app is missing the required audio-input entitlement." >&2
+  exit 1
+fi
 
 cp -R "$APP" "$DMG_ROOT/Alethia.app"
 ln -s /Applications "$DMG_ROOT/Applications"

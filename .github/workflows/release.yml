@@ -81,6 +81,18 @@ jobs:
           ALETHIA_BUNDLE_SIDECAR: "1"
         run: ./Scripts/package-dmg.sh release
 
+      - name: Verify microphone entitlement in DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          mount="$(hdiutil attach -readonly -nobrowse -noverify release/*.dmg | awk '/\/Volumes\// {sub(/^.*\/Volumes\//,"/Volumes/"); print; exit}')"
+          trap 'hdiutil detach "$mount"' EXIT
+          codesign --verify --deep --strict --verbose=2 "$mount/Alethia.app"
+          codesign -d --entitlements :- "$mount/Alethia.app" 2>/dev/null \
+            | tee /tmp/alethia-entitlements.plist
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' \
+            /tmp/alethia-entitlements.plist | grep -qx true
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
