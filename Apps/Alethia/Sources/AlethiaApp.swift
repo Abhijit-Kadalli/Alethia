@@ -213,7 +213,7 @@ final class AppModel: ObservableObject {
             }
             reload()
             syncMenuBarAnimation()
-            Task { await self.bootstrapASR() }
+            Task { await self.bootstrapPermissionsAndASR() }
         } catch {
             fatalError("Failed to start Alethia: \(error)")
         }
@@ -251,17 +251,38 @@ final class AppModel: ObservableObject {
         overlay.updateLevel(rms)
     }
 
-    private func bootstrapASR() async {
+    private func bootstrapPermissionsAndASR() async {
+        statusMessage = "Checking microphone access…"
+        switch permissions.microphoneStatus() {
+        case .notDetermined:
+            // Trigger the native macOS consent sheet as soon as the app opens.
+            let status = await permissions.requestMicrophone()
+            if status == .denied {
+                statusMessage = "Microphone access denied — open Microphone Settings to enable Alethia"
+            }
+        case .denied:
+            // macOS only presents its consent sheet once. Make the recovery path explicit.
+            statusMessage = "Microphone access is off — open Microphone Settings to enable Alethia"
+        case .granted:
+            break
+        }
+
         if CrisperSidecarLauncher.hasBundledRuntime() {
-            statusMessage = "Preparing on-device speech models… first launch downloads about 550 MB"
-        } else {
+            statusMessage = permissions.microphoneStatus() == .denied
+                ? "Microphone access is off — open Microphone Settings to enable Alethia"
+                : "Preparing on-device speech models… first launch downloads about 550 MB"
+        } else if permissions.microphoneStatus() != .denied {
             statusMessage = "Starting local speech engine…"
         }
         let ready = await CrisperSidecarLauncher.ensureRunning()
         if !ready {
-            statusMessage = CrisperSidecarLauncher.hasBundledRuntime()
-                ? "Speech model setup failed. Check your internet connection, then reopen Alethia."
-                : "ASR offline — run ./Scripts/setup-crisperwhisper.sh"
+            if permissions.microphoneStatus() == .denied {
+                statusMessage = "Microphone access is off — open Microphone Settings to enable Alethia"
+            } else {
+                statusMessage = CrisperSidecarLauncher.hasBundledRuntime()
+                    ? "Speech model setup failed. Check your internet connection, then reopen Alethia."
+                    : "ASR offline — run ./Scripts/setup-crisperwhisper.sh"
+            }
             return
         }
         await refreshStatus()
@@ -270,11 +291,13 @@ final class AppModel: ObservableObject {
     private func refreshStatus() async {
         let asrOK = await CrisperWhisperRecognizer.isHealthy()
         let axOK = permissions.accessibilityTrusted(prompt: false)
+        let microphoneStatus = permissions.microphoneStatus()
         var parts: [String] = []
         let offlineMessage = CrisperSidecarLauncher.hasBundledRuntime()
             ? "ASR: preparing models"
             : "ASR: offline — run ./Scripts/setup-crisperwhisper.sh"
         parts.append(asrOK ? "ASR: CrisperWhisper" : offlineMessage)
+        parts.append(microphoneStatus == .granted ? "Mic: on" : "Mic: off — open Microphone Settings")
         if axOK {
             parts.append("AX: on · hold Fn or Right ⌥ to dictate")
             hotkey.refreshEventTap()

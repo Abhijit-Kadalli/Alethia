@@ -53,10 +53,20 @@ public final class PermissionGate: @unchecked Sendable {
     }
 
     public func openAccessibilitySettings() {
-        let candidates = [
+        openSystemSettings([
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
-        ]
+        ])
+    }
+
+    public func openMicrophoneSettings() {
+        openSystemSettings([
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone"
+        ])
+    }
+
+    private func openSystemSettings(_ candidates: [String]) {
         for raw in candidates {
             if let url = URL(string: raw), NSWorkspace.shared.open(url) { return }
         }

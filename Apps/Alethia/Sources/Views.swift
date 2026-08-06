@@ -41,6 +41,9 @@ struct MenuBarView: View {
             Button("Open Hub") {
                 NotificationCenter.default.post(name: .alethiaOpenHub, object: nil)
             }
+            Button("Open Microphone Settings") {
+                model.permissions.openMicrophoneSettings()
+            }
             Button("Open Accessibility Settings") {
                 model.permissions.openAccessibilitySettings()
             }
