@@ -1,0 +1,90 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v-prefixed tag to publish (defaults to the selected ref)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dmg:
+    name: Build and publish DMG
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-}"
+          if [[ -z "$tag" && "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9] ]]; then
+            echo "A v-prefixed release tag is required (for example, v0.1.0)." >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Verify tag matches app version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Apps/Alethia/Resources/Info.plist)"
+          if [[ "$RELEASE_TAG" != "v$app_version" ]]; then
+            echo "Tag $RELEASE_TAG does not match app version $app_version." >&2
+            exit 1
+          fi
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+          uname -a
+
+      - name: Build DMG
+        env:
+          ALETHIA_BUILD_ARCH: arm64
+        run: ./Scripts/package-dmg.sh release
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Alethia-${{ steps.release.outputs.tag }}-dmg
+          path: |
+            release/*.dmg
+            release/*.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            release/*.dmg \
+            release/*.sha256 \
+            --verify-tag \
+            --generate-notes \
+            --title "Alethia ${RELEASE_TAG#v}"
