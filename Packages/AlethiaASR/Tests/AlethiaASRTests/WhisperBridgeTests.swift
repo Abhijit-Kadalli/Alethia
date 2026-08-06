@@ -1,5 +1,6 @@
 import XCTest
 @testable import AlethiaASR
+import AlethiaCore
 
 final class CrisperBridgeTests: XCTestCase {
     func testWAVEncoderProducesRIFFHeader() throws {
