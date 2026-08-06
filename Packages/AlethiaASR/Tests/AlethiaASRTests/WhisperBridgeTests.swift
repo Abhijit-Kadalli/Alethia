@@ -20,11 +20,20 @@ final class CrisperBridgeTests: XCTestCase {
         XCTAssertEqual(segs[0].endMs, 1200)
     }
 
-    func testParseResponseRejectsStubUnlessAllowed() {
+    func testParseResponseHonorsStubPolicy() throws {
         let json = """
         {"text":"stub transcript","stub":true,"segments":[{"start_ms":0,"end_ms":1000,"text":"stub transcript"}]}
         """.data(using: .utf8)!
-        XCTAssertThrowsError(try CrisperWhisperRecognizer.parseResponse(json, fallbackDurationMs: 1000))
+        let allow = ProcessInfo.processInfo.environment["ALETHIA_CRISPER_ALLOW_STUB"]
+            .map { ["1", "true", "yes"].contains($0.lowercased()) } ?? false
+        if allow {
+            XCTAssertEqual(
+                try CrisperWhisperRecognizer.parseResponse(json, fallbackDurationMs: 1000).first?.text,
+                "stub transcript"
+            )
+        } else {
+            XCTAssertThrowsError(try CrisperWhisperRecognizer.parseResponse(json, fallbackDurationMs: 1000))
+        }
     }
 
     func testStubRecognizerReturnsPlaceholder() async throws {

@@ -189,9 +189,9 @@ public enum CrisperSidecarLauncher {
     /// Returns true if health check succeeds (starts process if needed and waits briefly).
     @discardableResult
     public static func ensureRunning(
-        configuration: CrisperWhisperConfiguration = .defaultLocal(),
-        fileManager: FileManager = .default
+        configuration: CrisperWhisperConfiguration = .defaultLocal()
     ) async -> Bool {
+        let fileManager = FileManager.default
         if await CrisperWhisperRecognizer.isHealthy(baseURL: configuration.baseURL) {
             return true
         }
@@ -237,8 +237,8 @@ public enum CrisperSidecarLauncher {
         return false
     }
 
-    public static func hasBundledRuntime(fileManager: FileManager = .default) -> Bool {
-        bundledStartScript(fileManager: fileManager) != nil
+    public static func hasBundledRuntime() -> Bool {
+        bundledStartScript(fileManager: .default) != nil
     }
 
     private static func bundledStartScript(fileManager: FileManager) -> URL? {
