@@ -54,7 +54,9 @@ jobs:
         run: swift build --build-tests
 
       - name: Run Swift tests
-        run: swift test --parallel --enable-code-coverage
+        # Several persistence/diarization tests use process-global state and are
+        # not safe when XCTest runs each case in a separate parallel process.
+        run: swift test --enable-code-coverage
 
       - name: Smoke ASR via CrisperWhisper sidecar (fixture)
         run: |
