@@ -229,8 +229,8 @@ final class AppModel: ObservableObject {
         }()
         if shouldAnimate {
             guard menuBarAnimationTimer == nil else { return }
-            let timer = Timer(timeInterval: 1.0 / 8.0, repeats: true) { [weak self] _ in
-                Task { @MainActor in
+            let timer = Timer(timeInterval: 1.0 / 8.0, repeats: true) { _ in
+                Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.menuBarFrame = (self.menuBarFrame + 1) % 120
                 }

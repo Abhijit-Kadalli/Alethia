@@ -78,8 +78,8 @@ final class MeetingAudioPlayer: ObservableObject {
 
     private func startTick() {
         stopTick()
-        tick = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        tick = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+            Task { @MainActor [weak self] in
                 self?.syncTime()
             }
         }
