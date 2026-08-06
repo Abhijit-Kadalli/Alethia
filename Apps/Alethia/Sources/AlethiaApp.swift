@@ -44,6 +44,7 @@ struct AlethiaApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var shared: AppDelegate?
     var openWindow: OpenWindowAction?
+    private let permissions = PermissionGate()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.shared = self
@@ -54,6 +55,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .alethiaOpenHub,
             object: nil
         )
+        // A menu-bar-only app may not be active early enough for macOS to put its
+        // TCC sheet in front. Present an explicit foreground explanation first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+            self?.promptForMicrophoneAccess()
+        }
+    }
+
+    @MainActor
+    private func promptForMicrophoneAccess() {
+        switch permissions.microphoneStatus() {
+        case .granted:
+            return
+        case .notDetermined:
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "Allow Microphone Access"
+            alert.informativeText = "Alethia needs microphone access for meeting recording and dictation. Audio is processed locally on this Mac. Click Continue, then Allow in the macOS permission dialog."
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Not Now")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                Self.restoreAccessoryPolicyIfNeeded()
+                return
+            }
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let status = await self.permissions.requestMicrophone()
+                if status == .denied {
+                    self.showMicrophoneSettingsAlert()
+                }
+                Self.restoreAccessoryPolicyIfNeeded()
+            }
+        case .denied:
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            showMicrophoneSettingsAlert()
+            Self.restoreAccessoryPolicyIfNeeded()
+        }
+    }
+
+    @MainActor
+    private func showMicrophoneSettingsAlert() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Microphone Access Is Off"
+        alert.informativeText = "macOS has already recorded a denial for Alethia and will not show the Allow dialog again. Enable Alethia in Privacy & Security → Microphone."
+        alert.addButton(withTitle: "Open Microphone Settings")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            permissions.openMicrophoneSettings()
+        }
+    }
+
+    @MainActor
+    private static func restoreAccessoryPolicyIfNeeded() {
+        let hasVisibleWindow = NSApp.windows.contains { $0.isVisible && $0.title == "Alethia" }
+        if !hasVisibleWindow {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     @objc private func handleOpenHub() {
@@ -251,21 +314,28 @@ final class AppModel: ObservableObject {
         overlay.updateLevel(rms)
     }
 
-    private func bootstrapPermissionsAndASR() async {
-        statusMessage = "Checking microphone access…"
+    func requestMicrophoneAccess() {
         switch permissions.microphoneStatus() {
+        case .granted:
+            statusMessage = "Microphone access is on"
         case .notDetermined:
-            // Trigger the native macOS consent sheet as soon as the app opens.
-            let status = await permissions.requestMicrophone()
-            if status == .denied {
-                statusMessage = "Microphone access denied — open Microphone Settings to enable Alethia"
+            Task {
+                let status = await permissions.requestMicrophone()
+                statusMessage = status == .granted
+                    ? "Microphone access is on"
+                    : "Microphone access denied — open Microphone Settings to enable Alethia"
+                await refreshStatus()
             }
         case .denied:
-            // macOS only presents its consent sheet once. Make the recovery path explicit.
-            statusMessage = "Microphone access is off — open Microphone Settings to enable Alethia"
-        case .granted:
-            break
+            permissions.openMicrophoneSettings()
+            statusMessage = "Enable Alethia in Privacy & Security → Microphone, then reopen it"
         }
+    }
+
+    private func bootstrapPermissionsAndASR() async {
+        statusMessage = permissions.microphoneStatus() == .denied
+            ? "Microphone access is off — open Microphone Settings to enable Alethia"
+            : "Checking microphone access…"
 
         if CrisperSidecarLauncher.hasBundledRuntime() {
             statusMessage = permissions.microphoneStatus() == .denied
