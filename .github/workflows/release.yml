@@ -22,6 +22,9 @@ jobs:
     name: Build and publish DMG
     runs-on: macos-26
     timeout-minutes: 60
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      HAS_NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8 != '' }}
     steps:
       - name: Resolve tag
         id: release
@@ -49,7 +52,7 @@ jobs:
           [[ "$RELEASE_TAG" == "v$v" ]] || { echo "Tag $RELEASE_TAG != v$v" >&2; exit 1; }
 
       - name: Import Developer ID certificate (optional)
-        if: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+        if: env.HAS_SIGNING_CERT == 'true'
         env:
           P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -65,7 +68,7 @@ jobs:
           echo "ALETHIA_CODESIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
 
       - name: Prepare notarization key (optional)
-        if: ${{ secrets.NOTARY_KEY_P8 != '' }}
+        if: env.HAS_NOTARY_KEY == 'true'
         env:
           NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
         run: |
