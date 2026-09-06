@@ -17,34 +17,38 @@ public struct Log: Sendable {
     #endif
 
     public func debug(_ message: @autoclosure () -> String) {
+        let text = message()
         #if canImport(os)
-        logger.debug("\(message(), privacy: .public)")
+        logger.debug("\(text, privacy: .public)")
         #else
-        emit("DEBUG", message())
+        emit("DEBUG", text)
         #endif
     }
 
     public func info(_ message: @autoclosure () -> String) {
+        let text = message()
         #if canImport(os)
-        logger.info("\(message(), privacy: .public)")
+        logger.info("\(text, privacy: .public)")
         #else
-        emit("INFO", message())
+        emit("INFO", text)
         #endif
     }
 
     public func warning(_ message: @autoclosure () -> String) {
+        let text = message()
         #if canImport(os)
-        logger.warning("\(message(), privacy: .public)")
+        logger.warning("\(text, privacy: .public)")
         #else
-        emit("WARN", message())
+        emit("WARN", text)
         #endif
     }
 
     public func error(_ message: @autoclosure () -> String) {
+        let text = message()
         #if canImport(os)
-        logger.error("\(message(), privacy: .public)")
+        logger.error("\(text, privacy: .public)")
         #else
-        emit("ERROR", message())
+        emit("ERROR", text)
         #endif
     }
 
