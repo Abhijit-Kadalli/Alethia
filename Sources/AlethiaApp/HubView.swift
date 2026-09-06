@@ -1,8 +1,5 @@
 import AppKit
 import SwiftUI
-import AlethiaCore
-import AlethiaDictation
-import AlethiaKnowledge
 import AlethiaMeetings
 import AlethiaSpeech
 
@@ -90,7 +87,7 @@ private struct HubShell: View {
         case .speakers:
             SpeakersView(selection: $selectedSpeakerID)
         case .settings:
-            settingsPaneList
+            SettingsPaneList()
         }
     }
 
@@ -109,19 +106,8 @@ private struct HubShell: View {
         case .speakers:
             SpeakerDetailView(selection: $selectedSpeakerID)
         case .settings:
-            SettingsView()
+            SettingsPaneDetail()
         }
-    }
-
-    private var settingsPaneList: some View {
-        List(selection: $nav.settingsPane) {
-            ForEach(SettingsPane.allCases) { pane in
-                Label(pane.title, systemImage: pane.symbol)
-                    .tag(pane)
-            }
-        }
-        .listStyle(.sidebar)
-        .navigationTitle("Settings")
     }
 
     @ViewBuilder
@@ -172,7 +158,7 @@ private struct HubBanner<Actions: View>: View {
     let tint: Color
     let message: String
     var onDismiss: (() -> Void)?
-    @ViewBuilder var actions: () -> Actions
+    let actions: () -> Actions
 
     init(
         symbol: String,
@@ -211,7 +197,7 @@ private struct HubBanner<Actions: View>: View {
     }
 }
 
-extension HubBanner where Actions == EmptyView {
+private extension HubBanner where Actions == EmptyView {
     init(symbol: String, tint: Color, message: String, onDismiss: (() -> Void)? = nil) {
         self.init(symbol: symbol, tint: tint, message: message, onDismiss: onDismiss) { EmptyView() }
     }

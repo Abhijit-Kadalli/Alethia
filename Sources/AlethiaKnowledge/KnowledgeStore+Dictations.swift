@@ -68,6 +68,21 @@ extension KnowledgeStore {
         }
     }
 
+    public func dictation(id: UUID) throws -> Dictation? {
+        try withLock {
+            let rows: [Dictation] = try db.query(
+                """
+                SELECT id, created_at, raw_text, final_text, edited_text, target_bundle_id, target_app_name,
+                       duration_ms, insertion, applied_stages_json
+                FROM dictations WHERE id = ?
+                """,
+                bind: { try db.bindUUID($0, 1, id) },
+                row: { self.dictation(from: $0) }
+            )
+            return rows.first
+        }
+    }
+
     public func listDictations(limit: Int = 200, offset: Int = 0) throws -> [Dictation] {
         try withLock {
             try db.query(

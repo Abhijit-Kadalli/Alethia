@@ -2,6 +2,20 @@ import Foundation
 import AlethiaCore
 
 extension KnowledgeStore {
+    public func dictionaryEntry(id: UUID) throws -> DictionaryEntry? {
+        try withLock {
+            let rows: [DictionaryEntry] = try db.query(
+                """
+                SELECT id, spoken, written, origin, created_at, use_count
+                FROM dictionary WHERE id = ?
+                """,
+                bind: { try db.bindUUID($0, 1, id) },
+                row: { self.dictionaryEntry(from: $0) }
+            )
+            return rows.first
+        }
+    }
+
     public func dictionaryEntries() throws -> [DictionaryEntry] {
         try withLock {
             try db.query(
@@ -73,6 +87,20 @@ extension KnowledgeStore {
                     )
                 }
             }
+        }
+    }
+
+    public func snippet(id: UUID) throws -> Snippet? {
+        try withLock {
+            let rows: [Snippet] = try db.query(
+                """
+                SELECT id, trigger, expansion, created_at, use_count
+                FROM snippets WHERE id = ?
+                """,
+                bind: { try db.bindUUID($0, 1, id) },
+                row: { self.snippet(from: $0) }
+            )
+            return rows.first
         }
     }
 

@@ -6,27 +6,43 @@ import AlethiaKnowledge
 import AlethiaSpeech
 import AlethiaText
 
-/// Settings section of the Hub: a pane list on the left, forms on the right.
+/// Standalone settings window. The Hub uses `SettingsPaneList` + `SettingsPaneDetail` in the split.
 struct SettingsView: View {
+    var body: some View {
+        HSplitView {
+            SettingsPaneList()
+                .frame(minWidth: 180, ideal: 220, maxWidth: 280)
+            SettingsPaneDetail()
+        }
+    }
+}
+
+/// Settings pane list (Hub content column).
+struct SettingsPaneList: View {
+    @ObservedObject private var nav = HubNavigation.shared
+
+    var body: some View {
+        List(SettingsPane.allCases, selection: $nav.settingsPane) { pane in
+            Label(pane.title, systemImage: pane.symbol).tag(pane)
+        }
+        .listStyle(.sidebar)
+        .navigationTitle("Settings")
+    }
+}
+
+/// The selected settings pane (Hub detail column).
+struct SettingsPaneDetail: View {
     @EnvironmentObject private var env: AppEnvironment
     @ObservedObject private var nav = HubNavigation.shared
 
     var body: some View {
-        HStack(spacing: 0) {
-            List(SettingsPane.allCases, selection: $nav.settingsPane) { pane in
-                Label(pane.title, systemImage: pane.symbol).tag(pane)
-            }
-            .listStyle(.sidebar)
-            .frame(width: 190)
-            Divider()
-            ScrollView {
-                pane
-                    .padding(24)
-                    .frame(maxWidth: 640, alignment: .leading)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        ScrollView {
+            pane
+                .padding(24)
+                .frame(maxWidth: 680, alignment: .leading)
         }
-        .navigationTitle("Settings")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .navigationTitle(nav.settingsPane.title)
     }
 
     @ViewBuilder

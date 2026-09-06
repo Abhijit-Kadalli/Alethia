@@ -347,9 +347,12 @@ final class KnowledgeStoreDictationTests: XCTestCase {
         try store.saveDictation(newer)
 
         XCTAssertEqual(try store.listDictations().map(\.finalText), ["newer", "older"])
+        XCTAssertEqual(try store.dictation(id: newer.id)?.finalText, "newer")
+        XCTAssertNil(try store.dictation(id: UUID()))
         try store.updateDictationEdit(id: newer.id, editedText: "newer edited")
         XCTAssertEqual(try store.listDictations().first?.editedText, "newer edited")
         XCTAssertEqual(try store.listDictations().first?.displayText, "newer edited")
+        XCTAssertEqual(try store.dictation(id: newer.id)?.editedText, "newer edited")
 
         try store.deleteDictation(id: older.id)
         XCTAssertEqual(try store.listDictations().map(\.id), [newer.id])
@@ -372,6 +375,8 @@ final class KnowledgeStoreVocabularyTests: XCTestCase {
         XCTAssertEqual(entries[0].spoken, "k8s")
         XCTAssertEqual(entries[0].written, "Kubernetes")
         XCTAssertEqual(entries[0].origin, .learned)
+        XCTAssertEqual(try store.dictionaryEntry(id: originalID)?.written, "Kubernetes")
+        XCTAssertNil(try store.dictionaryEntry(id: UUID()))
 
         try store.recordDictionaryUse(ids: [originalID, originalID])
         XCTAssertEqual(try store.dictionaryEntries().first?.useCount, 2)
@@ -391,6 +396,8 @@ final class KnowledgeStoreVocabularyTests: XCTestCase {
         XCTAssertEqual(snippets[0].id, originalID)
         XCTAssertEqual(snippets[0].trigger, "sig")
         XCTAssertEqual(snippets[0].expansion, "Kind regards")
+        XCTAssertEqual(try store.snippet(id: originalID)?.expansion, "Kind regards")
+        XCTAssertNil(try store.snippet(id: UUID()))
 
         try store.recordSnippetUse(ids: [originalID])
         XCTAssertEqual(try store.snippets().first?.useCount, 1)
