@@ -60,7 +60,7 @@ private struct GeneralSettingsPane: View {
             Section("About") {
                 LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")
                 LabeledContent("Speech", value: "FluidAudio · NVIDIA Parakeet TDT · Apache-2.0 / CC-BY")
-                Link("Source code and licenses", destination: URL(string: "https://github.com/lewistowler/alethia")!)
+                Link("Source code and licenses", destination: URL(string: "https://github.com/Abhijit-Kadalli/Alethia")!)
             }
         }
         .formStyle(.grouped)
