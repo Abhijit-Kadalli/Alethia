@@ -10,9 +10,9 @@ import AlethiaCore
 /// Two `AsrManager`s share one set of loaded models so a meeting being finalized never
 /// delays a dictation.
 public actor SpeechEngine: SpeechEngineProtocol {
-    public let variant: SpeechModelVariant
+    public private(set) var variant: SpeechModelVariant
     /// BCP-47 hint for the multilingual model, or nil for auto.
-    public var languageHint: String?
+    public private(set) var languageHint: String?
 
     private var models: AsrModels?
     private var realtime: AsrManager?
@@ -27,6 +27,15 @@ public actor SpeechEngine: SpeechEngineProtocol {
     }
 
     public var isReady: Bool { realtime != nil }
+
+    /// Switch model/language. Unloads the current recognizer when the model changes.
+    public func configure(variant: SpeechModelVariant, languageHint: String?) async {
+        if variant != self.variant {
+            await unload()
+        }
+        self.variant = variant
+        self.languageHint = languageHint
+    }
 
     var asrVersion: AsrModelVersion {
         variant == .parakeetV2English ? .v2 : .v3
