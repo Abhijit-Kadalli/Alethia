@@ -70,7 +70,7 @@ final class AppEnvironment: ObservableObject {
         self.models = models
         let speech = SpeechEngine(variant: loaded.speechModel, languageHint: loaded.dictation.language)
         self.speech = speech
-        let calendar: CalendarService
+        let calendar = CalendarService()
         self.calendar = calendar
         let processor = MeetingProcessor(store: store, speech: speech, settings: settingsStore, paths: paths)
         self.processor = processor

@@ -4,6 +4,7 @@ import AlethiaCore
 import AlethiaDictation
 import AlethiaKnowledge
 import AlethiaMeetings
+import AlethiaSpeech
 
 struct MenuBarIcon: View {
     @EnvironmentObject private var env: AppEnvironment
