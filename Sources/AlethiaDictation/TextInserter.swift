@@ -37,6 +37,8 @@ public struct InsertionTarget: Sendable, Equatable {
 /// Unicode key events. The last resort leaves the text on the clipboard.
 @MainActor
 public final class TextInserter {
+    /// `kAXSecureTextFieldRole` is a CFSTR macro and is not imported into Swift.
+    private let secureTextFieldRole = "AXSecureTextField"
     public var pasteSettleDelay: Duration = .milliseconds(180)
     private let log = Log("Insert")
 
@@ -53,10 +55,10 @@ public final class TextInserter {
         }
         guard let element = focusedElement() else { return target }
         target.role = stringAttribute(element, kAXRoleAttribute)
-        target.isSecureField = target.role == kAXSecureTextFieldRole
+        target.isSecureField = target.role == secureTextFieldRole
         let editableRoles: Set<String> = [
             kAXTextAreaRole, kAXTextFieldRole, kAXComboBoxRole,
-            kAXSecureTextFieldRole, "AXWebArea", "AXSearchField",
+            secureTextFieldRole, "AXWebArea", "AXSearchField",
         ]
         var settable = DarwinBoolean(false)
         let canSetSelected = AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable) == .success && settable.boolValue
