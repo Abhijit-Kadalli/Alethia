@@ -11,7 +11,7 @@ struct SettingsView: View {
     var body: some View {
         HSplitView {
             SettingsPaneList()
-                .frame(minWidth: 180, ideal: 220, maxWidth: 280)
+                .frame(minWidth: 180, idealWidth: 220, maxWidth: 280)
             SettingsPaneDetail()
         }
     }

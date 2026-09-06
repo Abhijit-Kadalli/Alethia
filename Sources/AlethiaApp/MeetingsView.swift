@@ -272,7 +272,7 @@ struct MeetingDetailView: View {
             if recorder.isRecording, showsLive {
                 LiveRecordingView(recorder: recorder)
             } else if nav.selectedMeetingID != nil {
-                SavedMeetingDetail(meetingID: nav.selectedMeetingID, processor: processor)
+                SavedMeetingDetail(processor: processor, meetingID: nav.selectedMeetingID)
             } else {
                 ContentUnavailableView(
                     "Select a meeting",
