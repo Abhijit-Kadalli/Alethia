@@ -100,11 +100,14 @@ public final class MeetingRecorder: ObservableObject {
         try store.saveMeeting(meeting)
 
         let capture = MeetingAudioCapture()
-        let live: LiveTranscriber? = meetingSettings.liveTranscript ? try await speech.startLiveTranscription() : nil
+        var live: LiveTranscriber?
+        if meetingSettings.liveTranscript {
+            live = try await speech.startLiveTranscription()
+        }
         capture.onChunk = { [weak self, live] chunk in
             live?.feed(chunk.samples)
-            Task { @MainActor [weak self] in
-                guard let self else { return }
+            guard let self else { return }
+            Task { @MainActor in
                 self.level = self.meter.update(rms: chunk.microphoneRMS)
                 self.systemLevel = self.systemMeter.update(rms: chunk.systemRMS)
             }

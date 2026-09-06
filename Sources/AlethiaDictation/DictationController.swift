@@ -143,8 +143,9 @@ public final class DictationController: ObservableObject {
         capture.onFrames = { [weak self, live] frames in
             live.feed(frames)
             let rms = AudioMixer.rms(frames)
-            Task { @MainActor [weak self] in
-                guard let self, self.state == .listening else { return }
+            guard let self else { return }
+            Task { @MainActor in
+                guard self.state == .listening else { return }
                 self.overlay.update(level: self.meter.update(rms: rms))
             }
         }
@@ -171,7 +172,7 @@ public final class DictationController: ObservableObject {
         if dictation.playSounds { DictationSounds.stop() }
         overlay.show(phase: .processing)
 
-        let (samples, durationMs) = capture.stop()
+        let (_, durationMs) = capture.stop()
         self.capture = nil
         self.live = nil
 
@@ -191,7 +192,6 @@ public final class DictationController: ObservableObject {
             state = .idle
             return
         }
-        _ = samples
 
         let raw = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else {

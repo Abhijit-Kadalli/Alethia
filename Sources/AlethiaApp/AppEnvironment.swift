@@ -19,7 +19,7 @@ final class AppEnvironment: ObservableObject {
     let store: KnowledgeStore
     let permissions = PermissionGate()
     let models: ModelManager
-    let calendar = CalendarService()
+    let calendar: CalendarService
     let detector = MeetingDetector()
     let processor: MeetingProcessor
     let recorder: MeetingRecorder
@@ -51,26 +51,36 @@ final class AppEnvironment: ObservableObject {
         self.settings = loaded
 
         let store: KnowledgeStore
+        var startupMessage: String?
         do {
             try paths.ensureDirectories()
             store = try KnowledgeStore(paths: paths)
         } catch {
             // A broken database must not take the whole app down; fall back to memory and surface it.
-            store = (try? KnowledgeStore.inMemory()) ?? { fatalError("SQLite unavailable: \(error)") }()
-            startupError = "Could not open the local database: \(error.localizedDescription)"
+            guard let memory = try? KnowledgeStore.inMemory() else {
+                fatalError("SQLite unavailable: \(error)")
+            }
+            store = memory
+            startupMessage = "Could not open the local database: \(error.localizedDescription)"
         }
         store.startObservingChanges()
         self.store = store
 
-        models = ModelManager()
+        let models = ModelManager()
+        self.models = models
         let speech = SpeechEngine(variant: loaded.speechModel, languageHint: loaded.dictation.language)
         self.speech = speech
-        processor = MeetingProcessor(store: store, speech: speech, settings: settingsStore, paths: paths)
+        let calendar: CalendarService
+        self.calendar = calendar
+        let processor = MeetingProcessor(store: store, speech: speech, settings: settingsStore, paths: paths)
+        self.processor = processor
         recorder = MeetingRecorder(store: store, speech: speech, processor: processor, settings: settingsStore, paths: paths, calendar: calendar)
         dictation = DictationController(store: store, speech: speech, settings: settingsStore)
+        startupError = startupMessage
 
-        processor.setNotesProducer(NotesBridge(provider: Self.makeProvider(loaded.languageModel), enabled: loaded.languageModel.autoEnhanceNotes))
-        dictation.polisher = Self.makeProvider(loaded.languageModel).map { DictationPolisher(provider: $0) }
+        let provider = Self.makeProvider(loaded.languageModel)
+        processor.setNotesProducer(NotesBridge(provider: provider, enabled: loaded.languageModel.autoEnhanceNotes))
+        dictation.polisher = provider.map { DictationPolisher(provider: $0) }
 
         changesTask = Task { [weak self] in
             guard let self else { return }
