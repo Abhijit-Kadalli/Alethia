@@ -2,8 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Required by the Hardened Runtime for microphone and Core Audio input. -->
+	<!-- Hardened Runtime: microphone / Core Audio input. -->
 	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<!-- Calendar access for meeting titles and attendees (optional, user-enabled). -->
+	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
 </dict>
 </plist>
