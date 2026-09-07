@@ -174,8 +174,7 @@ public final class MeetingRecorder: ObservableObject {
         // Keep the live transcript visible while the accurate pass runs.
         meeting.utterances = Self.provisionalUtterances(from: liveTranscript, meetingID: meetingID)
         do {
-            try store.updateMeetingMetadata(meeting)
-            try store.replaceUtterances(meetingID: meetingID, meeting.utterances)
+            try store.saveMeeting(meeting)
         } catch {
             warning = "Couldn't save the meeting: \(error.localizedDescription)"
             log.error("stop persist failed: \(error.localizedDescription)")
@@ -183,7 +182,6 @@ public final class MeetingRecorder: ObservableObject {
                 try store.updateStatus(meetingID: meetingID, status: .processing, error: nil)
             } catch {
                 log.error("stop status retry failed: \(error.localizedDescription)")
-                processor.recoverInterrupted()
             }
         }
 

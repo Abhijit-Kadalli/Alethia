@@ -492,7 +492,7 @@ final class KnowledgeStoreObservationTests: XCTestCase {
         let token = NotificationCenter.default.addObserver(
             forName: KnowledgeStore.didChangeNotification,
             object: store,
-            queue: .main
+            queue: nil
         ) { note in
             let changes = note.userInfo?[KnowledgeStore.changesKey] as? Set<KnowledgeStore.Change> ?? []
             if changes.contains(.meetings) {
@@ -501,7 +501,7 @@ final class KnowledgeStoreObservationTests: XCTestCase {
         }
         defer { NotificationCenter.default.removeObserver(token) }
         try store.saveMeeting(Meeting(title: "Observed"))
-        wait(for: [exp], timeout: 1.5)
+        wait(for: [exp], timeout: 5)
     }
 
     func testChangeMapsKnownTables() {

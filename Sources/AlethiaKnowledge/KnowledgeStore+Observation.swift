@@ -4,7 +4,8 @@ import CSQLite
 
 extension KnowledgeStore {
     /// Which area of the store changed. Posted (coalesced) as `KnowledgeStore.didChangeNotification`
-    /// on the main queue with the set of changed areas under `changesKey`.
+    /// with the set of changed areas under `changesKey`. Delivery is off the SQLite thread so
+    /// Linux tests do not depend on the main run loop pumping `DispatchQueue.main`.
     public enum Change: String, Sendable, Hashable, CaseIterable {
         case meetings
         case utterances
@@ -71,10 +72,11 @@ final class ObserverBox: @unchecked Sendable {
     }
 }
 
-/// Batches row-level hook callbacks into one notification per run loop turn.
+/// Batches row-level hook callbacks into one notification per coalescing window.
 final class ChangeCoalescer: @unchecked Sendable {
     private weak var store: KnowledgeStore?
     private let lock = NSLock()
+    private let flushQueue = DispatchQueue(label: "alethia.knowledge.changes")
     private var pending: Set<KnowledgeStore.Change> = []
     private var scheduled = false
 
@@ -90,7 +92,7 @@ final class ChangeCoalescer: @unchecked Sendable {
         scheduled = true
         lock.unlock()
         guard needsFlush else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self] in
+        flushQueue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self] in
             self?.flush()
         }
     }

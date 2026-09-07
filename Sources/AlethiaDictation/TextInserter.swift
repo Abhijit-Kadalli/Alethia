@@ -90,8 +90,7 @@ public final class TextInserter {
             return .keystrokes
         }
         if focusedIsSecureField() { return .blockedSecureField }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        writeConcealedClipboard(text)
         return .clipboardOnly
     }
 
@@ -190,12 +189,7 @@ public final class TextInserter {
     private func insertViaPaste(_ text: String) async -> Bool {
         let pasteboard = NSPasteboard.general
         let saved = PasteboardSnapshot(pasteboard)
-        pasteboard.clearContents()
-        let item = NSPasteboardItem()
-        item.setString(text, forType: .string)
-        // Clipboard managers honour this marker and skip transient content.
-        item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
-        guard pasteboard.writeObjects([item]) else { return false }
+        guard writeConcealedClipboard(text) else { return false }
         let ourChange = pasteboard.changeCount
 
         guard sendKey(virtualKey: CGKeyCode(kVK_ANSI_V), flags: .maskCommand) else {
@@ -210,6 +204,17 @@ public final class TextInserter {
     }
 
     // MARK: Key events
+
+    @discardableResult
+    private func writeConcealedClipboard(_ text: String) -> Bool {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        // Clipboard managers honour this marker and skip transient content.
+        item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        return pasteboard.writeObjects([item])
+    }
 
     private func sendKey(virtualKey: CGKeyCode, flags: CGEventFlags) -> Bool {
         guard let source = CGEventSource(stateID: .combinedSessionState),

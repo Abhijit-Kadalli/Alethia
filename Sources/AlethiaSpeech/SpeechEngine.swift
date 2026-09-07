@@ -86,6 +86,7 @@ public actor SpeechEngine: SpeechEngineProtocol {
 
     public func unload() async {
         liveSession?.cancel()
+        await liveSession?.waitUntilEnded()
         liveSession = nil
         if let realtime { await realtime.cleanup() }
         if let batch { await batch.cleanup() }
@@ -170,8 +171,13 @@ public actor SpeechEngine: SpeechEngineProtocol {
 
     public func startLiveTranscription() async throws -> LiveTranscriber {
         guard let realtime else { throw AlethiaError.modelsNotReady("Speech model is not loaded.") }
-        if let liveSession, liveSession.isActive {
-            throw AlethiaError.invalidInput("Speech recognition is already in use. Stop dictation or the meeting first.")
+        if let liveSession {
+            // Still feeding audio: a second caller (dictation + meeting) is a real conflict.
+            if liveSession.isAccepting {
+                throw AlethiaError.invalidInput("Speech recognition is already in use. Stop dictation or the meeting first.")
+            }
+            // Cancel/finish already started — wait out the in-flight decode, then reuse.
+            await liveSession.waitUntilEnded()
         }
         let session = IncrementalTranscriber(manager: realtime, language: fluidLanguage)
         liveSession = session
@@ -239,6 +245,7 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
     private var finished = false
     private var ended = false
     private var awaitingFinal = false
+    private var endedWaiters: [CheckedContinuation<Void, Never>] = []
     private var loop: Task<Void, Never>?
 
     private let sampleRate = 16_000
@@ -258,11 +265,31 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
         }
     }
 
+    /// True until `cancel()` / `finish()` has been requested. A winding-down session is not accepting.
+    var isAccepting: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !finished
+    }
+
     /// True until `cancel()` / `finish()` has completed in-flight recognition.
     var isActive: Bool {
         lock.lock()
         defer { lock.unlock() }
         return !ended
+    }
+
+    /// Suspends until the decode loop (and `finish()`'s final pass) have released the ASR manager.
+    func waitUntilEnded() async {
+        lock.lock()
+        if ended {
+            lock.unlock()
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            endedWaiters.append(continuation)
+            lock.unlock()
+        }
     }
 
     func feed(_ samples: [Float]) {
@@ -295,13 +322,22 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
         lock.unlock()
         loop?.cancel()
         continuation.finish()
-        // `ended` flips when `runLoop` returns so an overlapping decode still blocks a new session.
+        // `ended` flips when `runLoop` returns so an overlapping decode still occupies the manager.
     }
 
     private func markEnded() {
         lock.lock()
+        guard !ended else {
+            lock.unlock()
+            return
+        }
         ended = true
+        let waiters = endedWaiters
+        endedWaiters.removeAll()
         lock.unlock()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     private func runLoop() async {

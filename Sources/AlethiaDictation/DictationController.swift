@@ -53,6 +53,7 @@ public final class DictationController: ObservableObject {
         hotkey.onEvent = { [weak self] event in
             self?.handle(event)
         }
+        applyOverlayChrome(settings.load().dictation)
     }
 
     // MARK: Hotkey lifecycle
@@ -75,6 +76,12 @@ public final class DictationController: ObservableObject {
         if hotkey.hotkey != dictation.hotkey {
             hotkey.hotkey = dictation.hotkey
         }
+        applyOverlayChrome(dictation)
+    }
+
+    private func applyOverlayChrome(_ dictation: DictationSettings) {
+        overlay.model.hotkeySymbol = dictation.hotkey.symbol
+        overlay.model.isToggleMode = dictation.activation == .toggle
     }
 
     private func handle(_ event: HotkeyMonitor.Event) {

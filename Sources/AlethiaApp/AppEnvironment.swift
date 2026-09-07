@@ -110,8 +110,14 @@ final class AppEnvironment: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] phase in
                 guard let self else { return }
-                self.detector.setRecording(self.recorder.isRecording)
+                self.refreshDetectorSuppression()
                 if case .recording = phase { self.detectedCall = nil }
+            }
+            .store(in: &cancellables)
+        dictation.$state
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.refreshDetectorSuppression()
             }
             .store(in: &cancellables)
     }
@@ -182,12 +188,30 @@ final class AppEnvironment: ObservableObject {
         }
     }
 
+    /// True when live capture or background ASR still owns the speech engine.
+    var speechResourcesInUse: Bool {
+        recorder.isRecording || dictation.state != .idle || processor.isBusy
+    }
+
+    private func refreshDetectorSuppression() {
+        detector.setRecording(recorder.isRecording || dictation.state == .listening)
+    }
+
     private func swapSpeechEngine() async {
-        guard !recorder.isRecording, dictation.state == .idle else { return }
+        guard !speechResourcesInUse else { return }
         await speech.configure(variant: settings.speechModel, languageHint: settings.dictation.language)
         if models.recognizerInstalled(for: settings.speechModel) {
             try? await speech.prepare()
         }
+    }
+
+    /// Unloads in-memory ASR/VAD/diarizer. Refuses while a session or pipeline is using them.
+    func unloadSpeechIfSafe() async -> String? {
+        guard !speechResourcesInUse else {
+            return "Stop dictation and wait for meeting processing before deleting models."
+        }
+        await speech.unload()
+        return nil
     }
 
     // MARK: Language model

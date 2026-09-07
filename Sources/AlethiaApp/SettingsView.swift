@@ -3,6 +3,7 @@ import SwiftUI
 import AlethiaCore
 import AlethiaDictation
 import AlethiaKnowledge
+import AlethiaMeetings
 import AlethiaSpeech
 import AlethiaText
 
@@ -51,7 +52,12 @@ struct SettingsPaneDetail: View {
         case .general: GeneralSettingsPane()
         case .dictation: DictationSettingsPane(dictation: env.dictation)
         case .meetings: MeetingSettingsPane()
-        case .models: ModelSettingsPane(models: env.models)
+        case .models: ModelSettingsPane(
+            models: env.models,
+            recorder: env.recorder,
+            processor: env.processor,
+            dictation: env.dictation
+        )
         case .intelligence: IntelligenceSettingsPane()
         case .privacy: PrivacySettingsPane()
         }
@@ -202,8 +208,15 @@ private struct MeetingSettingsPane: View {
 private struct ModelSettingsPane: View {
     @EnvironmentObject private var env: AppEnvironment
     @ObservedObject var models: ModelManager
+    @ObservedObject var recorder: MeetingRecorder
+    @ObservedObject var processor: MeetingProcessor
+    @ObservedObject var dictation: DictationController
     @State private var error: String?
     @State private var confirmDelete: ModelComponent?
+
+    private var speechBusy: Bool {
+        recorder.isRecording || dictation.state != .idle || processor.isBusy
+    }
 
     var body: some View {
         Form {
@@ -211,7 +224,7 @@ private struct ModelSettingsPane: View {
                 Picker("Model", selection: $env.settings.speechModel) {
                     ForEach(SpeechModelVariant.allCases, id: \.self) { Text($0.displayName).tag($0) }
                 }
-                .disabled(models.activeDownloads > 0)
+                .disabled(models.activeDownloads > 0 || speechBusy)
                 Text("Parakeet TDT 0.6B v2 is the most accurate for English. v3 detects and transcribes 25 European languages. Both run on the Neural Engine.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -249,8 +262,16 @@ private struct ModelSettingsPane: View {
         .confirmationDialog("Delete \(confirmDelete?.displayName ?? "model")?", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } })) {
             Button("Delete", role: .destructive) {
                 if let component = confirmDelete {
-                    try? models.delete(component)
-                    Task { await env.speech.unload() }
+                    if env.speechResourcesInUse {
+                        error = "Stop dictation and wait for meeting processing before deleting models."
+                    } else {
+                        try? models.delete(component)
+                        Task {
+                            if let message = await env.unloadSpeechIfSafe() {
+                                error = message
+                            }
+                        }
+                    }
                 }
                 confirmDelete = nil
             }
@@ -265,7 +286,8 @@ private struct ModelSettingsPane: View {
                 .font(.caption).foregroundStyle(.secondary)
             Button { confirmDelete = component } label: { Image(systemName: "trash") }
                 .buttonStyle(.borderless)
-                .help("Delete")
+                .disabled(speechBusy)
+                .help(speechBusy ? "Stop dictation and wait for meeting processing first" : "Delete")
         case .downloading:
             Button("Cancel") { models.cancelDownload(component) }.controlSize(.small)
         case .notInstalled, .failed:
