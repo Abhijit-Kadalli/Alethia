@@ -53,7 +53,6 @@ struct AlethiaApp: App {
                                 // `recorder.warning` is published for Hub / menu bar.
                             }
                         }
-                        }
                     }
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
