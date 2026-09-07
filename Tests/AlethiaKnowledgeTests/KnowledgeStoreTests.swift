@@ -486,22 +486,23 @@ final class KnowledgeStoreSearchTests: XCTestCase {
 
 final class KnowledgeStoreObservationTests: XCTestCase {
     func testStartObservingChangesPostsCoalescedNotification() throws {
+        final class Box: @unchecked Sendable {
+            var changes: Set<KnowledgeStore.Change> = []
+        }
         let store = try KnowledgeStore.inMemory()
         store.startObservingChanges()
-        let exp = expectation(description: "meetings change")
+        let box = Box()
         let token = NotificationCenter.default.addObserver(
             forName: KnowledgeStore.didChangeNotification,
             object: store,
             queue: nil
         ) { note in
             let changes = note.userInfo?[KnowledgeStore.changesKey] as? Set<KnowledgeStore.Change> ?? []
-            if changes.contains(.meetings) {
-                exp.fulfill()
-            }
+            box.changes.formUnion(changes)
         }
         defer { NotificationCenter.default.removeObserver(token) }
         try store.saveMeeting(Meeting(title: "Observed"))
-        wait(for: [exp], timeout: 1)
+        XCTAssertTrue(box.changes.contains(.meetings), "got \(box.changes)")
     }
 
     func testChangeMapsKnownTables() {
