@@ -67,6 +67,9 @@ private struct MenuBarBody: View {
             if let lastError {
                 Text(lastError).font(.caption).foregroundStyle(.red)
             }
+            if let warning = recorder.warning, !warning.isEmpty, lastError == nil {
+                Text(warning).font(.caption).foregroundStyle(.orange)
+            }
             Divider()
             recentMeetings
             Divider()

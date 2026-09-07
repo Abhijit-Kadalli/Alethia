@@ -32,12 +32,26 @@ struct MeetingsView: View {
             }
         }
         .navigationTitle("Meetings")
+        .safeAreaInset(edge: .top) {
+            if recorder.phase == .idle, let warning = recorder.warning, !warning.isEmpty {
+                Text(warning)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task {
-                        guard let meeting = try? await recorder.start() else { return }
-                        nav.selectedMeetingID = meeting.id
+                        do {
+                            let meeting = try await recorder.start()
+                            nav.selectedMeetingID = meeting.id
+                        } catch {
+                            // `recorder.warning` is set by start() for the list/live banners.
+                        }
                     }
                 } label: {
                     Label("Record meeting", systemImage: "record.circle")

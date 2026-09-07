@@ -69,9 +69,15 @@ public final class MeetingRecorder: ObservableObject {
             throw AlethiaError.invalidInput("A recording is already in progress.")
         }
         if let reason = beginBlockedReason?() {
+            warning = reason
             throw AlethiaError.invalidInput(reason)
         }
-        try await PermissionGate().requireMicrophone()
+        do {
+            try await PermissionGate().requireMicrophone()
+        } catch {
+            warning = error.localizedDescription
+            throw error
+        }
         phase = .starting
         warning = nil
         liveTranscript = LiveTranscriptUpdate()
@@ -81,6 +87,7 @@ public final class MeetingRecorder: ObservableObject {
             try await speech.prepare()
         } catch {
             phase = .idle
+            warning = error.localizedDescription
             throw error
         }
 
@@ -133,6 +140,7 @@ public final class MeetingRecorder: ObservableObject {
             live?.cancel()
             try? store.deleteMeeting(id: meeting.id)
             phase = .idle
+            warning = error.localizedDescription
             throw error
         }
 

@@ -47,7 +47,12 @@ struct AlethiaApp: App {
                         if env.recorder.isRecording {
                             await env.recorder.stop()
                         } else {
-                            try? await env.recorder.start()
+                            do {
+                                try await env.recorder.start()
+                            } catch {
+                                // `recorder.warning` is published for Hub / menu bar.
+                            }
+                        }
                         }
                     }
                 }

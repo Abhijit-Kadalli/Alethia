@@ -280,6 +280,7 @@ final class AppEnvironment: ObservableObject {
                 try await recorder.start(suggestedApp: app)
             } catch {
                 log.error("start meeting failed: \(error.localizedDescription)")
+                // `recorder.warning` is already set by start(); menu bar and Hub show it.
             }
         }
     }
