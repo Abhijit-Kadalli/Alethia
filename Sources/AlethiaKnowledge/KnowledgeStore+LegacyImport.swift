@@ -7,8 +7,6 @@ extension KnowledgeStore {
     func importLegacyKnowledgeStoreIfNeeded(from paths: AppPaths) throws {
         let legacyURL = paths.legacyDatabase
         guard FileManager.default.fileExists(atPath: legacyURL.path) else { return }
-        let existingMeetings = try stats().meetingCount
-        guard existingMeetings == 0 else { return }
 
         let sessionCount: Int
         let dictationCount: Int
@@ -67,7 +65,8 @@ extension KnowledgeStore {
                 return meeting
             }
 
-            for var meeting in sessions {
+            let knownMeetings = Set(try listMeetings(limit: 10_000).map(\.id))
+            for var meeting in sessions where !knownMeetings.contains(meeting.id) {
                 let utterances = try legacy.query(
                     """
                     SELECT id, speaker_id, speaker_label, start_ms, end_ms, text, intended_text,
@@ -117,7 +116,8 @@ extension KnowledgeStore {
                     targetBundleID: SQLite.text(stmt, 4)
                 )
             }
-            for dictation in dictations {
+            let knownDictations = Set(try listDictations(limit: 10_000).map(\.id))
+            for dictation in dictations where !knownDictations.contains(dictation.id) {
                 try saveDictation(dictation)
             }
             sessionCount = sessions.count
