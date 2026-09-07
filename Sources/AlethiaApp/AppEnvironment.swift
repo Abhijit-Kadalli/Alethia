@@ -144,6 +144,9 @@ final class AppEnvironment: ObservableObject {
             detector.start()
         }
         processor.recoverInterrupted()
+        if settings.launchAtLogin {
+            setLaunchAtLogin(true)
+        }
         if models.recognizerInstalled(for: settings.speechModel) {
             Task {
                 do { try await speech.prepare() } catch { log.warning("warm-up failed: \(error.localizedDescription)") }

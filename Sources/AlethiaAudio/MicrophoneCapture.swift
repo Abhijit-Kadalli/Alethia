@@ -43,7 +43,7 @@ public final class MicrophoneCapture: @unchecked Sendable {
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
-            queue: nil
+            queue: .main
         ) { [weak self] _ in
             self?.handleConfigurationChange()
         }

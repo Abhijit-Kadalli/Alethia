@@ -72,6 +72,7 @@ public final class MeetingAudioCapture: @unchecked Sendable {
                 try writer.append(chunk.samples)
             } catch {
                 self.log.error("write failed: \(error.localizedDescription)")
+                self.onWarning?("Couldn't write the recording: \(error.localizedDescription)")
             }
             self.onChunk?(chunk)
         }

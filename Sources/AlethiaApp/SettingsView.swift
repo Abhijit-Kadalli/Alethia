@@ -262,14 +262,15 @@ private struct ModelSettingsPane: View {
         .confirmationDialog("Delete \(confirmDelete?.displayName ?? "model")?", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } })) {
             Button("Delete", role: .destructive) {
                 if let component = confirmDelete {
-                    if env.speechResourcesInUse {
+                    if speechBusy {
                         error = "Stop dictation and wait for meeting processing before deleting models."
                     } else {
-                        try? models.delete(component)
                         Task {
                             if let message = await env.unloadSpeechIfSafe() {
                                 error = message
+                                return
                             }
+                            try? models.delete(component)
                         }
                     }
                 }

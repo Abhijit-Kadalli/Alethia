@@ -102,27 +102,26 @@ public final class MeetingRecorder: ObservableObject {
             attendees: calendarContext?.attendees ?? []
         )
         meeting.audioPath = paths.relativeRecordingPath(for: meeting.id)
-        try paths.ensureDirectories()
-        try store.saveMeeting(meeting)
 
         let capture = MeetingAudioCapture()
         var live: LiveTranscriber?
-        if meetingSettings.liveTranscript {
-            live = try await speech.startLiveTranscription()
-        }
-        capture.onChunk = { [weak self, live] chunk in
-            live?.feed(chunk.samples)
-            guard let self else { return }
-            Task { @MainActor in
-                self.level = self.meter.update(rms: chunk.microphoneRMS)
-                self.systemLevel = self.systemMeter.update(rms: chunk.systemRMS)
-            }
-        }
-        capture.onWarning = { [weak self] message in
-            Task { @MainActor in self?.warning = message }
-        }
-
         do {
+            try paths.ensureDirectories()
+            try store.saveMeeting(meeting)
+            if meetingSettings.liveTranscript {
+                live = try await speech.startLiveTranscription()
+            }
+            capture.onChunk = { [weak self, live] chunk in
+                live?.feed(chunk.samples)
+                guard let self else { return }
+                Task { @MainActor in
+                    self.level = self.meter.update(rms: chunk.microphoneRMS)
+                    self.systemLevel = self.systemMeter.update(rms: chunk.systemRMS)
+                }
+            }
+            capture.onWarning = { [weak self] message in
+                Task { @MainActor in self?.warning = message }
+            }
             let withSystem = try await capture.start(to: paths.recordingURL(for: meeting.id), includeSystemAudio: meetingSettings.includeSystemAudio)
             capturingSystemAudio = withSystem
             if !withSystem {

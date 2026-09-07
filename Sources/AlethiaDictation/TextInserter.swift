@@ -107,7 +107,11 @@ public final class TextInserter {
         }
         try? await Task.sleep(for: .milliseconds(40))
         if focusedIsSecureField() { return .blockedSecureField }
-        return await insert(replacement)
+        let method = await insert(replacement)
+        if method == .clipboardOnly {
+            _ = await insert(previous)
+        }
+        return method
     }
 
     private func focusedIsSecureField() -> Bool {
@@ -202,6 +206,7 @@ public final class TextInserter {
         try? await Task.sleep(for: pasteSettleDelay)
         if pasteboard.changeCount == ourChange {
             saved.restore(to: pasteboard)
+            return false
         }
         return true
     }
