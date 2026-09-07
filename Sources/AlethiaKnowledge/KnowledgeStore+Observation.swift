@@ -49,8 +49,9 @@ extension KnowledgeStore {
         AsyncStream { continuation in
             let observer = ObserverBox()
             observer.token = NotificationCenter.default.addObserver(
-                forName: Self.didChangeNotification, object: self, queue: nil
-            ) { note in
+                forName: Self.didChangeNotification, object: nil, queue: nil
+            ) { [weak self] note in
+                guard let self, let posted = note.object as? KnowledgeStore, posted === self else { return }
                 let set = note.userInfo?[Self.changesKey] as? Set<Change> ?? []
                 continuation.yield(set)
             }

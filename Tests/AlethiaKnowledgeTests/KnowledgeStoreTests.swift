@@ -492,11 +492,15 @@ final class KnowledgeStoreObservationTests: XCTestCase {
         let store = try KnowledgeStore.inMemory()
         store.startObservingChanges()
         let box = Box()
+        // Swift 6.1 Linux NotificationCenter keys `object:` by a per-call
+        // wrapper identity, so a post with `object: store` never matches an
+        // observer registered the same way. Filter the posted object instead.
         let token = NotificationCenter.default.addObserver(
             forName: KnowledgeStore.didChangeNotification,
-            object: store,
+            object: nil,
             queue: nil
         ) { note in
+            guard let posted = note.object as? KnowledgeStore, posted === store else { return }
             let changes = note.userInfo?[KnowledgeStore.changesKey] as? Set<KnowledgeStore.Change> ?? []
             box.changes.formUnion(changes)
         }
