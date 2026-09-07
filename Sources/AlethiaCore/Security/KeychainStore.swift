@@ -15,17 +15,15 @@ public enum KeychainStore {
 
     public static func get(account: String) -> String? {
         #if canImport(Security)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        if let value = copy(account: account, service: service) { return value }
+        // 0.1.x stored the OpenRouter key under a different service and account.
+        if account == "llm.apiKey",
+           let legacy = copy(account: "openrouter.apiKey", service: "app.alethia.macos"),
+           !legacy.isEmpty {
+            try? set(legacy, account: account)
+            return legacy
+        }
+        return nil
         #else
         memoryLock.lock(); defer { memoryLock.unlock() }
         return memory[account]
@@ -75,4 +73,20 @@ public enum KeychainStore {
         memory.removeValue(forKey: account)
         #endif
     }
+
+    #if canImport(Security)
+    private static func copy(account: String, service: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    #endif
 }
