@@ -27,6 +27,8 @@ public struct AppPaths: Sendable {
     }()
 
     public var database: URL { root.appendingPathComponent("alethia.sqlite") }
+    /// 0.1.x knowledge file (`sessions` / `ConversationSession`). Imported once into `database`.
+    public var legacyDatabase: URL { root.appendingPathComponent("knowledge.sqlite") }
     public var recordings: URL { root.appendingPathComponent("Recordings", isDirectory: true) }
     public var models: URL { root.appendingPathComponent("Models", isDirectory: true) }
     public var logs: URL { root.appendingPathComponent("Logs", isDirectory: true) }

@@ -156,6 +156,13 @@ public final class KnowledgeStore: @unchecked Sendable {
             try db.execRaw("PRAGMA busy_timeout = 5000")
             try migrate()
         }
+        if let paths {
+            do {
+                try importLegacyKnowledgeStoreIfNeeded(from: paths)
+            } catch {
+                log.warning("legacy import skipped: \(error.localizedDescription)")
+            }
+        }
     }
 
     public convenience init(paths: AppPaths) throws {

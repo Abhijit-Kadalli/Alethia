@@ -561,3 +561,114 @@ final class KnowledgeStoreStatsTests: XCTestCase {
         XCTAssertEqual(try store.listMeetings(limit: 500).count, 200)
     }
 }
+
+final class KnowledgeStoreLegacyImportTests: XCTestCase {
+    func testImportsZeroOneKnowledgeSqliteOnce() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("alethia-legacy-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = AppPaths(root: dir)
+        try paths.ensureDirectories()
+
+        let sessionID = UUID()
+        let utteranceID = UUID()
+        let dictationID = UUID()
+        let speakerID = UUID()
+        let started = Date(timeIntervalSince1970: 1_700_000_000)
+        let legacy = try SQLiteDB(path: paths.legacyDatabase.path)
+        try legacy.execRaw("""
+            CREATE TABLE speakers (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                embedding BLOB,
+                updated_at REAL NOT NULL
+            );
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                started_at REAL NOT NULL,
+                ended_at REAL,
+                source TEXT NOT NULL,
+                notes_markdown TEXT,
+                notes_generated_at REAL,
+                audio_path TEXT
+            );
+            CREATE TABLE utterances (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                speaker_id TEXT,
+                speaker_label TEXT NOT NULL,
+                start_ms INTEGER NOT NULL,
+                end_ms INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                intended_text TEXT,
+                words_json TEXT,
+                match_confidence REAL,
+                suggested_label TEXT
+            );
+            CREATE TABLE dictations (
+                id TEXT PRIMARY KEY,
+                created_at REAL NOT NULL,
+                text TEXT NOT NULL,
+                verbatim_text TEXT,
+                target_bundle_id TEXT
+            );
+            """)
+        try legacy.exec(
+            "INSERT INTO speakers(id, display_name, updated_at) VALUES(?,?,?)",
+            bind: { stmt in
+                try legacy.bindUUID(stmt, 1, speakerID)
+                try legacy.bindText(stmt, 2, "Ada")
+                try legacy.bindDate(stmt, 3, started)
+            }
+        )
+        try legacy.exec(
+            "INSERT INTO sessions(id, title, started_at, ended_at, source, notes_markdown, audio_path) VALUES(?,?,?,?,?,?,?)",
+            bind: { stmt in
+                try legacy.bindUUID(stmt, 1, sessionID)
+                try legacy.bindText(stmt, 2, "Standup")
+                try legacy.bindDate(stmt, 3, started)
+                try legacy.bindDate(stmt, 4, started.addingTimeInterval(60))
+                try legacy.bindText(stmt, 5, "mixed")
+                try legacy.bindText(stmt, 6, "Ship it")
+                try legacy.bindText(stmt, 7, "Recordings/\(sessionID.uuidString).wav")
+            }
+        )
+        try legacy.exec(
+            "INSERT INTO utterances(id, session_id, speaker_id, speaker_label, start_ms, end_ms, text) VALUES(?,?,?,?,?,?,?)",
+            bind: { stmt in
+                try legacy.bindUUID(stmt, 1, utteranceID)
+                try legacy.bindUUID(stmt, 2, sessionID)
+                try legacy.bindUUID(stmt, 3, speakerID)
+                try legacy.bindText(stmt, 4, "Ada")
+                try legacy.bindInt(stmt, 5, 0)
+                try legacy.bindInt(stmt, 6, 1200)
+                try legacy.bindText(stmt, 7, "Hello team")
+            }
+        )
+        try legacy.exec(
+            "INSERT INTO dictations(id, created_at, text, verbatim_text, target_bundle_id) VALUES(?,?,?,?,?)",
+            bind: { stmt in
+                try legacy.bindUUID(stmt, 1, dictationID)
+                try legacy.bindDate(stmt, 2, started)
+                try legacy.bindText(stmt, 3, "Hello")
+                try legacy.bindText(stmt, 4, "hello")
+                try legacy.bindText(stmt, 5, "com.apple.TextEdit")
+            }
+        )
+
+        let store = try KnowledgeStore(paths: paths)
+        let meetings = try store.listMeetings(includeUtterances: true)
+        XCTAssertEqual(meetings.map(\.title), ["Standup"])
+        XCTAssertEqual(meetings.first?.source, .microphoneAndSystem)
+        XCTAssertEqual(meetings.first?.userNotes, "Ship it")
+        XCTAssertEqual(meetings.first?.utterances.map(\.text), ["Hello team"])
+        XCTAssertEqual(try store.speakers().map(\.displayName), ["Ada"])
+        XCTAssertEqual(try store.listDictations().map(\.finalText), ["Hello"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.legacyDatabase.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("knowledge.sqlite.imported").path))
+
+        let again = try KnowledgeStore(paths: paths)
+        XCTAssertEqual(try again.listMeetings().count, 1)
+    }
+}
