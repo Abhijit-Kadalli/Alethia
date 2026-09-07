@@ -501,7 +501,7 @@ final class KnowledgeStoreObservationTests: XCTestCase {
         }
         defer { NotificationCenter.default.removeObserver(token) }
         try store.saveMeeting(Meeting(title: "Observed"))
-        wait(for: [exp], timeout: 5)
+        wait(for: [exp], timeout: 1)
     }
 
     func testChangeMapsKnownTables() {

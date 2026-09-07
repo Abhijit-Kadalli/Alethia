@@ -72,13 +72,11 @@ final class ObserverBox: @unchecked Sendable {
     }
 }
 
-/// Batches row-level hook callbacks into one notification per coalescing window.
+/// Batches row-level hook callbacks into one notification per `KnowledgeStore` write.
 final class ChangeCoalescer: @unchecked Sendable {
     private weak var store: KnowledgeStore?
     private let lock = NSLock()
-    private let flushQueue = DispatchQueue(label: "alethia.knowledge.changes")
     private var pending: Set<KnowledgeStore.Change> = []
-    private var scheduled = false
 
     init(store: KnowledgeStore) {
         self.store = store
@@ -88,20 +86,13 @@ final class ChangeCoalescer: @unchecked Sendable {
         guard let change = KnowledgeStore.Change(table: table) else { return }
         lock.lock()
         pending.insert(change)
-        let needsFlush = !scheduled
-        scheduled = true
         lock.unlock()
-        guard needsFlush else { return }
-        flushQueue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self] in
-            self?.flush()
-        }
     }
 
-    private func flush() {
+    func flush() {
         lock.lock()
         let changes = pending
         pending.removeAll()
-        scheduled = false
         lock.unlock()
         guard let store, !changes.isEmpty else { return }
         NotificationCenter.default.post(

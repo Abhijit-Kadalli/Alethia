@@ -227,14 +227,26 @@ public final class KnowledgeStore: @unchecked Sendable {
 
     func withLock<T>(_ body: () throws -> T) throws -> T {
         lock.lock()
-        defer { lock.unlock() }
-        return try body()
+        let result: T
+        do {
+            result = try body()
+        } catch {
+            lock.unlock()
+            changeCoalescer?.flush()
+            throw error
+        }
+        lock.unlock()
+        // Post after releasing the store lock so observers can read without deadlocking.
+        changeCoalescer?.flush()
+        return result
     }
 
     func withLock<T>(_ body: () -> T) -> T {
         lock.lock()
-        defer { lock.unlock() }
-        return body()
+        let result = body()
+        lock.unlock()
+        changeCoalescer?.flush()
+        return result
     }
 
     /// Multi-row writes use BEGIN IMMEDIATE. Caller must already hold `lock`.
