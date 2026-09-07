@@ -148,6 +148,7 @@ public final class DictationController: ObservableObject {
             try await PermissionGate().requireMicrophone()
         } catch {
             guard generation == beginGeneration else { return }
+            pendingFinish = false
             showError(error.localizedDescription)
             return
         }
@@ -161,6 +162,7 @@ public final class DictationController: ObservableObject {
         } catch {
             live?.cancel()
             guard generation == beginGeneration else { return }
+            pendingFinish = false
             showError((error as? AlethiaError)?.errorDescription ?? error.localizedDescription)
             return
         }
@@ -174,9 +176,13 @@ public final class DictationController: ObservableObject {
             live.feed(frames)
             let rms = AudioMixer.rms(frames)
             guard let self else { return }
+            let capped = capture.bufferedSamples >= capture.maxSamples
             Task { @MainActor in
                 guard self.state == .listening else { return }
                 self.overlay.update(level: self.meter.update(rms: rms))
+                if capped {
+                    await self.finish()
+                }
             }
         }
         self.capture = capture
@@ -312,6 +318,7 @@ public final class DictationController: ObservableObject {
 
     private func cancel(reason: String?) async {
         beginGeneration += 1
+        pendingFinish = false
         guard state == .listening else { return }
         state = .processing
         liveTask?.cancel()

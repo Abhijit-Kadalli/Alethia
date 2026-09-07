@@ -77,8 +77,9 @@ extension KnowledgeStore {
                     bind: { try legacy.bindUUID($0, 1, meeting.id) },
                     row: { stmt -> Utterance? in
                         guard let id = SQLite.uuid(stmt, 0) else { return nil }
-                        let intended = SQLite.text(stmt, 6)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                        let text = intended.isEmpty ? (SQLite.text(stmt, 5) ?? "") : intended
+                    let intended = SQLite.text(stmt, 6)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let verbatim = SQLite.text(stmt, 5) ?? ""
+                    let text = verbatim.isEmpty ? intended : verbatim
                         return Utterance(
                             id: id,
                             meetingID: meeting.id,
