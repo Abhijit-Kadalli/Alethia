@@ -215,7 +215,7 @@ private struct ModelSettingsPane: View {
     @State private var confirmDelete: ModelComponent?
 
     private var speechBusy: Bool {
-        recorder.isRecording || dictation.state != .idle || processor.isBusy
+        recorder.phase != .idle || dictation.state != .idle || processor.isBusy
     }
 
     var body: some View {
