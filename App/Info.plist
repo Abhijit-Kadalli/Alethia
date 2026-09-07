@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Alethia</string>
+	<key>CFBundleDisplayName</key>
+	<string>Alethia</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.alethia.macos</string>
+	<key>CFBundleExecutable</key>
+	<string>Alethia</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>100</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT License</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Alethia listens to transcribe meetings and dictation entirely on this Mac. Audio never leaves your device.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Alethia captures system audio from calls so meeting notes include other participants. It never records the screen.</string>
+	<key>NSScreenCaptureDescription</key>
+	<string>Alethia captures system audio from calls so meeting notes include other participants. It never records the screen.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Alethia reads your calendar to name meetings and pre-fill attendees. Nothing is written or uploaded.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Alethia reads your calendar to name meetings and pre-fill attendees. Nothing is written or uploaded.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Alethia types dictated text into the app you are using.</string>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>Alethia notifies you when a meeting is detected and when notes are ready.</string>
+</dict>
+</plist>

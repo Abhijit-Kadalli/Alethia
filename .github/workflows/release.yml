@@ -2,13 +2,12 @@ name: release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing v-prefixed tag to publish (defaults to the selected ref)"
-        required: false
+        description: "Existing v-prefixed tag to publish"
+        required: true
         type: string
 
 permissions:
@@ -21,10 +20,13 @@ concurrency:
 jobs:
   dmg:
     name: Build and publish DMG
-    runs-on: macos-14
-    timeout-minutes: 90
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      HAS_NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8 != '' }}
     steps:
-      - name: Resolve release tag
+      - name: Resolve tag
         id: release
         shell: bash
         env:
@@ -32,71 +34,63 @@ jobs:
         run: |
           set -euo pipefail
           tag="${INPUT_TAG:-}"
-          if [[ -z "$tag" && "$GITHUB_REF_TYPE" == "tag" ]]; then
-            tag="$GITHUB_REF_NAME"
-          fi
-          if [[ ! "$tag" =~ ^v[0-9] ]]; then
-            echo "A v-prefixed release tag is required (for example, v0.1.0)." >&2
-            exit 1
-          fi
+          if [[ -z "$tag" && "$GITHUB_REF_TYPE" == "tag" ]]; then tag="$GITHUB_REF_NAME"; fi
+          [[ "$tag" =~ ^v[0-9] ]] || { echo "A v-prefixed tag is required" >&2; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.release.outputs.tag }}
 
-      - name: Verify tag matches app version
+      - name: Verify tag matches Info.plist version
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
-          app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Apps/Alethia/Resources/Info.plist)"
-          if [[ "$RELEASE_TAG" != "v$app_version" ]]; then
-            echo "Tag $RELEASE_TAG does not match app version $app_version." >&2
-            exit 1
-          fi
+          v="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' App/Info.plist)"
+          [[ "$RELEASE_TAG" == "v$v" ]] || { echo "Tag $RELEASE_TAG != v$v" >&2; exit 1; }
 
-      - name: Show toolchain
-        run: |
-          swift --version
-          xcodebuild -version
-          uname -a
-
-      - name: Cache standalone Python download
-        uses: actions/cache@v4
-        with:
-          path: .build/downloads
-          key: sidecar-python-${{ runner.os }}-arm64-v1
-
-      - name: Cache Python packages
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/pip
-          key: sidecar-pip-${{ runner.os }}-arm64-${{ hashFiles('Tools/crisperwhisper_sidecar/requirements.txt', 'Scripts/build-sidecar-runtime.sh') }}
-
-      - name: Build DMG
+      - name: Import Developer ID certificate (optional)
+        if: env.HAS_SIGNING_CERT == 'true'
         env:
-          ALETHIA_BUILD_ARCH: arm64
-          ALETHIA_BUNDLE_SIDECAR: "1"
-        run: ./Scripts/package-dmg.sh release
-
-      - name: Verify microphone entitlement in DMG
-        shell: bash
+          P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
-          mount="$(hdiutil attach -readonly -nobrowse -noverify release/*.dmg | awk '/\/Volumes\// {sub(/^.*\/Volumes\//,"/Volumes/"); print; exit}')"
-          trap 'hdiutil detach "$mount"' EXIT
-          codesign --verify --deep --strict --verbose=2 "$mount/Alethia.app"
-          codesign -d --entitlements :- "$mount/Alethia.app" 2>/dev/null \
-            | tee /tmp/alethia-entitlements.plist
-          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' \
-            /tmp/alethia-entitlements.plist | grep -qx true
+          echo "$P12_BASE64" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+          identity="$(security find-identity -v -p codesigning build.keychain | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+          if [[ -z "$identity" ]]; then
+            echo "MACOS_CERTIFICATE_P12 was imported, but no Developer ID Application identity was found." >&2
+            security find-identity -v -p codesigning build.keychain >&2 || true
+            exit 1
+          fi
+          echo "ALETHIA_CODESIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
 
-      - name: Upload workflow artifact
+      - name: Prepare notarization key (optional)
+        if: env.HAS_NOTARY_KEY == 'true'
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          echo "$NOTARY_KEY_P8" > /tmp/notary.p8
+          echo "ALETHIA_NOTARY_KEY_PATH=/tmp/notary.p8" >> "$GITHUB_ENV"
+          echo "ALETHIA_NOTARY_KEY_ID=${{ secrets.NOTARY_KEY_ID }}" >> "$GITHUB_ENV"
+          echo "ALETHIA_NOTARY_ISSUER_ID=${{ secrets.NOTARY_ISSUER_ID }}" >> "$GITHUB_ENV"
+
+      - name: Build DMG (arm64)
+        env:
+          ALETHIA_BUILD_ARCH: arm64
+        run: ./Scripts/package-dmg.sh release
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Alethia-${{ steps.release.outputs.tag }}-dmg
+          name: Alethia-${{ steps.release.outputs.tag }}
           path: |
             release/*.dmg
             release/*.sha256
@@ -107,9 +101,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
-          gh release create "$RELEASE_TAG" \
-            release/*.dmg \
-            release/*.sha256 \
-            --verify-tag \
-            --generate-notes \
-            --title "Alethia ${RELEASE_TAG#v}"
+          gh release create "$RELEASE_TAG" release/*.dmg release/*.sha256 \
+            --verify-tag --generate-notes --title "Alethia ${RELEASE_TAG#v}"

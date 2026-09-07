@@ -1,93 +1,134 @@
-# Alethia Architecture
+# Architecture
 
-## Goals
+Alethia is a Swift package with one executable target (`AlethiaApp`) and seven library
+modules. The platform-independent modules (`Core`, `Text`, `Knowledge`, and the DSP parts of
+`Audio`) build and test on Linux, which keeps CI fast; everything that touches AVFoundation,
+CoreML, Accessibility or SwiftUI is macOS-only and behind `#if os(macOS)`.
 
-1. Explicit meeting recording that captures mic (+ optional system audio) only while the user is recording.
-2. Push-to-talk dictation (hold **Fn**) that types into any app and stores what was typed.
-3. Persistent speaker identity that improves as the user names people.
-4. Fully local — no audio or transcripts leave the device.
-
-## Process topology
-
-```mermaid
-flowchart TB
-  subgraph app [Alethia App Process]
-    UI[MenuBar and Hub]
-    Coord[AppModel]
-  end
-
-  subgraph packages [Swift Packages]
-    Audio[AlethiaAudio]
-    ASR[AlethiaASR]
-    Diar[AlethiaDiarization]
-    Dict[AlethiaDictation]
-    Know[AlethiaKnowledge]
-  end
-
-  subgraph sidecar [CrisperWhisper Sidecar]
-    CW[Python HTTP server]
-  end
-
-  UI --> Coord
-  Coord --> Audio
-  Coord --> ASR
-  Coord --> Diar
-  Coord --> Dict
-  Coord --> Know
-  Audio -->|meeting or dictation PCM| ASR
-  ASR --> CW
-  Audio -->|meeting PCM| Diar
-  Dict -->|DictationEvent| Know
-  ASR -->|Utterance text| Know
-  Diar -->|Speaker labels| Know
+```
+                 ┌──────────────┐   hold key    ┌────────────────┐
+ Microphone ───▶ │ Dictation    │ ────────────▶ │ SpeechEngine   │
+                 │ Controller   │ ◀──── text ── │ (FluidAudio)   │
+                 └──────┬───────┘               └───────┬────────┘
+                        │ format                        │ ASR · VAD · diarization
+                        ▼                               │
+                 ┌──────────────┐                       │
+                 │ Dictation    │                       │
+                 │ Formatter    │                       │
+                 └──────┬───────┘                       │
+                        │ insert (AX / ⌘V / keys)       │
+                        ▼                               ▼
+                  Focused app                   ┌────────────────┐
+                                                │ Meeting        │
+ Mic + system audio ─▶ MeetingAudioCapture ───▶ │ Recorder →     │
+                       (mixer, WAV, live feed)  │ Processor      │
+                                                └───────┬────────┘
+                                                        │ utterances, speakers, notes
+                                                        ▼
+                                                ┌────────────────┐
+                                                │ KnowledgeStore │ SQLite + FTS5
+                                                └────────────────┘
 ```
 
-## Dual-mode audio policy
-
-| Mode | Trigger | Capture | Downstream |
-|------|---------|---------|------------|
-| Meeting | Menu **Start / Stop Meeting Recording** | Mic (+ optional system audio) while recording | On stop → CrisperWhisper (verbatim) + diarization → SQLite |
-| Dictation | Hold **Fn** / release | Mic-only (or shared meeting stream if already recording) | CrisperWhisper (intended) → Accessibility paste → SQLite `dictations` |
-
-Dictation does not require a meeting session. If a meeting is already recording, dictation reuses that live PCM stream.
-
-## Package responsibilities
+## Modules
 
 ### AlethiaCore
-Domain types (`ConversationSession`, `Utterance`, `SpeakerProfile`, `DictationEvent`) and permission helpers.
+Plain value types shared by everything: `Meeting`, `Utterance`, `TimedWord`, `Speaker`,
+`Dictation`, `DictionaryEntry`, `Snippet`, `NotesTemplate`, `SearchHit`; `AppSettings` with a
+tolerant JSON `SettingsStore`; `AppPaths`; `PermissionGate` (TCC checks and System Settings
+deep links); `KeychainStore`; a small PCM16 `WAVCodec`; and `TranscriptAligner`, which turns
+word timings plus speaker segments plus mic/system loudness into speaker-attributed
+utterances and decides which cluster is "You".
 
-### AlethiaAudio
-- `AVAudioEngine` mic tap + ScreenCaptureKit system-audio mix
-- `MeetingRecorder` — explicit start/stop buffer
-- `DictationMicCapture` — mic-only for Fn dictation
-- DSP / VAD utilities retained for tests and future silence trimming
+### AlethiaText
+Everything that happens to words after recognition, all pure functions with tests:
 
-### AlethiaASR
-CrisperWhisper Python sidecar client. Consumes PCM segments; emits timestamped text (`intended` for dictation, `verbatim` for meetings).
-
-### AlethiaDiarization
-ECAPA-TDNN embeddings (SpeechBrain via sidecar `POST /embed`) per utterance → agglomerative clustering within a session → cosine match against the persistent speaker gallery. Spectral fingerprints are used only if ECAPA is unavailable.
-
-### AlethiaDictation
-Fn hotkey monitor, overlay waveform, Accessibility keystroke insertion, dictation artifact persistence via Knowledge.
+- `DictationFormatter` — a staged pipeline: dictionary replacements → filler removal →
+  self-correction resolution ("Tuesday, no, Wednesday") → voice commands ("new line",
+  "period", "scratch that", "all caps …") → smart formatting (numbers, currency, dates,
+  times, emails, URLs, phone numbers) → snippet expansion → app-aware style (`AppStyle`
+  inferred from the target bundle id) → capitalization and spacing that joins with the
+  text already before the cursor.
+- `CorrectionLearner` — diffs inserted vs. edited text and proposes dictionary entries.
+- `NotesGenerator` — heuristic notes (decisions, action items, questions, topics) and,
+  when a `LanguageModelProvider` is configured, prompt-driven notes per template with
+  guardrails; also suggests a title and one-line summary.
+- `DictationPolisher` — optional LLM pass over formatted dictation that must preserve the
+  user's words (rejected if it drifts too far).
+- `OpenAICompatibleProvider` — `/v1/chat/completions` client for Ollama, LM Studio,
+  llama.cpp server, OpenAI, etc. `AppleIntelligenceProvider` (in the app target) uses the
+  Foundation Models framework on macOS 26.
+- `MarkdownExport`.
 
 ### AlethiaKnowledge
-SQLite schema + FTS5 search across sessions, utterances, and dictations. Speaker rename updates gallery + historical labels.
+`KnowledgeStore` wraps a single SQLite connection (WAL, foreign keys, `PRAGMA user_version`
+migrations). Tables: meetings, utterances (with word timings as a Float32 blob), speakers
+(256-d voiceprints), dictations, dictionary, snippets, templates, and an FTS5 index over
+meeting titles/notes, utterances and dictations. A `sqlite3_update_hook` coalesces row
+changes into one `didChangeNotification` per run-loop turn so the UI can refetch without
+every mutator knowing about observers.
 
-## Data model (summary)
+### AlethiaAudio
+`MicrophoneCapture` (AVAudioEngine → 16 kHz mono Float32), `SystemAudioCapture`
+(ScreenCaptureKit audio-only stream), `AudioMixer` (aligns the two sources in 100 ms hops,
+records per-hop RMS of each source, soft-clips the sum), `WAVFileWriter` (streaming PCM16
+with header repair for crash recovery), `MicrophoneActivityMonitor` (CoreAudio
+`kAudioDevicePropertyDeviceIsRunningSomewhere`, used for meeting detection).
 
-- `speakers` — id, display_name, embedding blob, updated_at
-- `sessions` — id, started_at, ended_at, source (`meeting`|`mixed`|legacy `ambient`), title
-- `utterances` — session_id, speaker_id, start_ms, end_ms, text
-- `dictations` — id, created_at, text, target_bundle_id, session_id nullable
-- `fts_documents` — FTS5 over utterance + dictation text
+### AlethiaSpeech
+`SpeechEngine` is an actor over FluidAudio:
 
-## Performance strategy
+- **ASR**: Parakeet TDT 0.6B (`AsrManager`). Two managers share one loaded model set so a
+  meeting being finalized never blocks a dictation. Word timings come from
+  `buildWordTimings`. Whole recordings go through `transcribeDiskBacked`.
+- **Live partials**: `IncrementalTranscriber` re-decodes the uncommitted audio every
+  ~450 ms with the same batch model (the model is ~200× real time on the ANE, so a 10 s
+  window decodes in ~50 ms). Segments are committed at pauses so text before a pause
+  stops changing; on release the whole clip is decoded once more for the final result.
+  This gives punctuated, cased partials without a second streaming model.
+- **VAD**: Silero via `VadManager`, with an energy-based fallback.
+- **Diarization**: pyannote segmentation + WeSpeaker embeddings via `DiarizerManager`,
+  run off the actor on a detached task.
+- `ModelManager` tracks install state per component, downloads with progress through
+  FluidAudio's `ProgressHandler`, and reports disk usage. Models live in FluidAudio's
+  shared cache so the app bundle stays under 10 MB.
 
-1. No always-on ambient capture — audio engines run only during meeting recording or Fn dictation.
-2. CrisperWhisper `turbo` by default for latency; sidecar keeps the model warm.
-3. Prefer short dictation buffers; meetings transcribe on stop.
+### AlethiaDictation
+`HotkeyMonitor` (CGEventTap; modifier and function keys; hold vs. toggle; cancels if
+another key is pressed during a hold), `TextInserter` (Accessibility `AXSelectedText`
+with verification → ⌘V with pasteboard snapshot/restore → synthesized keystrokes; can
+replace the last insertion for corrections), `DictationOverlayController` (non-activating
+panel with level meter and partial text), `CorrectionPanelController` (editable popover
+with a countdown), and `DictationController`, which sequences a session:
 
-## Non-goals (v1)
+1. hotkey down → check target isn't a secure field → start mic + live transcriber → overlay
+2. hotkey up → final decode → `DictationFormatter` (with the user's dictionary, snippets,
+   app style, and preceding text) → optional LLM polish → insert
+3. save to history, bump dictionary/snippet use counts, show correction popover
+4. on edit → replace inserted text, store the edit, learn dictionary candidates
 
-Cloud sync, calendar briefs, Windows/iOS, Intel optimization, LLM note enhancement (local Ollama can come later on top of Knowledge search).
+### AlethiaMeetings
+`MeetingRecorder` (start/stop/discard, live transcript, editable title and notes while
+recording, calendar context), `MeetingProcessor` (queue: transcribe file → diarize → align
+→ match voiceprints against known speakers and update the "You" profile → save → notes →
+optional title; recovers meetings interrupted by a crash), `MeetingDetector` (mic-in-use
+plus a running conferencing app, with confirm and end grace periods), `CalendarService`
+(EventKit).
+
+### AlethiaApp
+`AppEnvironment` is the composition root. `MenuBarExtra` popover for controls and recent
+meetings; `OnboardingView` (permissions → models → hotkey); the Hub window with Meetings
+(list, live view, notes editor, transcript with speaker renaming), Dictation history,
+Dictionary & snippets, Speakers, and Settings. User notifications offer to record when a
+call is detected.
+
+## Concurrency model
+Controllers and view models are `@MainActor`. Audio callbacks arrive on audio threads and
+only push samples into thread-safe buffers or hop to the main actor for UI state.
+`SpeechEngine` is an actor; heavy synchronous work (diarization) runs on detached tasks.
+`KnowledgeStore` serializes SQLite access with a lock and is safe to call from any thread.
+
+## Size budget
+`Scripts/package-app.sh` fails if `Alethia.app` exceeds 10 MiB. FluidAudio has no binary
+frameworks and models are downloaded at runtime, so the bundle is the Swift executable,
+Info.plist, entitlements and icon.
