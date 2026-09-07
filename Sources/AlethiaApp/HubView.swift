@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import AlethiaDictation
 import AlethiaMeetings
 import AlethiaSpeech
 
@@ -75,6 +76,7 @@ private struct HubShell: View {
             MeetingsView(
                 recorder: recorder,
                 processor: processor,
+                dictation: env.dictation,
                 selectedDictationID: $selectedDictationID
             )
         case .dictations:
@@ -112,12 +114,12 @@ private struct HubShell: View {
 
     @ViewBuilder
     private var banners: some View {
-        if let error = env.startupError, !dismissedStartupError {
+        if let error = env.startupError, env.storeIsEphemeral || !dismissedStartupError {
             HubBanner(
                 symbol: "exclamationmark.triangle.fill",
                 tint: .orange,
                 message: error,
-                onDismiss: { dismissedStartupError = true }
+                onDismiss: env.storeIsEphemeral ? nil : { dismissedStartupError = true }
             )
         }
         if !models.recognizerInstalled(for: env.settings.speechModel) {

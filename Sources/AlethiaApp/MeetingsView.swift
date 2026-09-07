@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import AlethiaCore
+import AlethiaDictation
 import AlethiaKnowledge
 import AlethiaMeetings
 import AlethiaText
@@ -11,6 +12,7 @@ struct MeetingsView: View {
     @ObservedObject private var nav = HubNavigation.shared
     @ObservedObject var recorder: MeetingRecorder
     @ObservedObject var processor: MeetingProcessor
+    @ObservedObject var dictation: DictationController
     @Binding var selectedDictationID: UUID?
 
     @State private var meetings: [Meeting] = []
@@ -40,8 +42,8 @@ struct MeetingsView: View {
                 } label: {
                     Label("Record meeting", systemImage: "record.circle")
                 }
-                .disabled(recorder.phase != .idle)
-                .help("Record meeting")
+                .disabled(recorder.phase != .idle || dictation.state != .idle)
+                .help(dictation.state != .idle ? "Stop dictation before recording" : "Record meeting")
             }
         }
         .confirmationDialog("Delete this meeting?", isPresented: Binding(

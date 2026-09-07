@@ -92,6 +92,7 @@ public final class MeetingProcessor: ObservableObject {
 
     /// Regenerate notes only (e.g. after changing template or connecting an LLM).
     public func regenerateNotes(meetingID: UUID, templateID: String?) async {
+        guard progress[meetingID] == nil else { return }
         guard let meeting = try? store.meeting(id: meetingID) else { return }
         let template = resolveTemplate(templateID ?? meeting.enhancedNotesTemplateID)
         progress[meetingID] = Progress(meetingID: meetingID, stage: "Writing notes", fraction: 0.9)

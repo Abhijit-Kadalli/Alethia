@@ -26,6 +26,8 @@ public final class MeetingRecorder: ObservableObject {
     @Published public private(set) var capturingSystemAudio = false
     /// Meeting row being recorded (title/notes editable while it runs).
     @Published public private(set) var current: Meeting?
+    /// Return a reason to refuse `start()`, e.g. while dictation is listening.
+    public var beginBlockedReason: (() -> String?)?
 
     private let store: KnowledgeStore
     private let speech: any SpeechEngineProtocol
@@ -66,6 +68,10 @@ public final class MeetingRecorder: ObservableObject {
             if let current { return current }
             throw AlethiaError.invalidInput("A recording is already in progress.")
         }
+        if let reason = beginBlockedReason?() {
+            throw AlethiaError.invalidInput(reason)
+        }
+        try await PermissionGate().requireMicrophone()
         phase = .starting
         warning = nil
         liveTranscript = LiveTranscriptUpdate()
@@ -167,8 +173,19 @@ public final class MeetingRecorder: ObservableObject {
         meeting.status = .processing
         // Keep the live transcript visible while the accurate pass runs.
         meeting.utterances = Self.provisionalUtterances(from: liveTranscript, meetingID: meetingID)
-        try? store.updateMeetingMetadata(meeting)
-        try? store.replaceUtterances(meetingID: meetingID, meeting.utterances)
+        do {
+            try store.updateMeetingMetadata(meeting)
+            try store.replaceUtterances(meetingID: meetingID, meeting.utterances)
+        } catch {
+            warning = "Couldn't save the meeting: \(error.localizedDescription)"
+            log.error("stop persist failed: \(error.localizedDescription)")
+            do {
+                try store.updateStatus(meetingID: meetingID, status: .processing, error: nil)
+            } catch {
+                log.error("stop status retry failed: \(error.localizedDescription)")
+                processor.recoverInterrupted()
+            }
+        }
 
         current = nil
         level = 0
@@ -178,7 +195,12 @@ public final class MeetingRecorder: ObservableObject {
         if let result {
             processor.enqueue(meetingID: meetingID, capture: result)
         } else {
-            try? store.updateStatus(meetingID: meetingID, status: .failed, error: "No audio was recorded.")
+            do {
+                try store.updateStatus(meetingID: meetingID, status: .failed, error: "No audio was recorded.")
+            } catch {
+                warning = "Couldn't save the meeting: \(error.localizedDescription)"
+                log.error("failed-status persist: \(error.localizedDescription)")
+            }
         }
         return meetingID
     }

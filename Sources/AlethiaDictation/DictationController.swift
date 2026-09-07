@@ -23,6 +23,8 @@ public final class DictationController: ObservableObject {
     @Published public private(set) var hotkeyActive = false
     /// Optional LLM polish; nil disables the pass.
     public var polisher: DictationPolisher?
+    /// Return a reason to refuse `begin()`, e.g. while a meeting is recording.
+    public var beginBlockedReason: (() -> String?)?
 
     private let store: KnowledgeStore
     private let speech: any SpeechEngineProtocol
@@ -113,6 +115,10 @@ public final class DictationController: ObservableObject {
 
     private func begin() async {
         guard state == .idle else { return }
+        if let reason = beginBlockedReason?() {
+            showError(reason)
+            return
+        }
         let dictation = settings.load().dictation
         lastError = nil
         correction.dismiss()
@@ -126,20 +132,23 @@ public final class DictationController: ObservableObject {
 
         do {
             try await speech.prepare()
+            try await PermissionGate().requireMicrophone()
         } catch {
             showError(error.localizedDescription)
             return
         }
 
         let capture = DictationAudioCapture()
-        let live: LiveTranscriber
+        var live: LiveTranscriber?
         do {
             live = try await speech.startLiveTranscription()
             try capture.start()
         } catch {
+            live?.cancel()
             showError((error as? AlethiaError)?.errorDescription ?? error.localizedDescription)
             return
         }
+        guard let live else { return }
         capture.onFrames = { [weak self, live] frames in
             live.feed(frames)
             let rms = AudioMixer.rms(frames)
@@ -231,6 +240,8 @@ public final class DictationController: ObservableObject {
         let blocked = method == .blockedSecureField
         if blocked {
             overlay.flash(.error("Dictation is off in password fields."), for: .seconds(2))
+        } else if method == .clipboardOnly {
+            overlay.flash(.copied(finalText), for: .seconds(2.4))
         } else {
             overlay.flash(.inserted(finalText), for: .seconds(1.4))
         }
@@ -255,7 +266,7 @@ public final class DictationController: ObservableObject {
         }
         state = .idle
 
-        if dictation.showCorrectionPopover, method != .clipboardOnly, !blocked {
+        if dictation.showCorrectionPopover, !blocked {
             pendingCorrectionDictationID = record.id
             correction.present(text: finalText, seconds: dictation.correctionPopoverSeconds) { [weak self] edited in
                 Task { @MainActor in

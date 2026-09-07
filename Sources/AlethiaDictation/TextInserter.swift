@@ -102,7 +102,8 @@ public final class TextInserter {
             return .accessibility
         }
         if focusedIsSecureField() { return .blockedSecureField }
-        sendBackspaces(count: previous.count)
+        // HID delete removes a user-perceived character (grapheme), not a UTF-16 unit.
+        sendBackspaces(count: TextMetrics.deletionKeystrokes(for: previous))
         try? await Task.sleep(for: .milliseconds(40))
         return await insert(replacement)
     }
@@ -140,7 +141,7 @@ public final class TextInserter {
               let value = stringAttribute(element, kAXValueAttribute),
               let range = selectedRange(element) else { return false }
         let caret = range.location + range.length
-        let length = previous.utf16.count
+        let length = TextMetrics.utf16Length(of: previous)
         guard caret >= length else { return false }
         let start = caret - length
         let utf16 = Array(value.utf16)

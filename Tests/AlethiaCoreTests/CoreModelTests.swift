@@ -87,6 +87,14 @@ final class CoreModelTests: XCTestCase {
         XCTAssertEqual(paths.resolve(relativePath: paths.relativeRecordingPath(for: id)), paths.recordingURL(for: id))
     }
 
+    func testTextMetricsGraphemeVersusUTF16() {
+        XCTAssertEqual(TextMetrics.deletionKeystrokes(for: "hello"), 5)
+        XCTAssertEqual(TextMetrics.utf16Length(of: "hello"), 5)
+        XCTAssertEqual(TextMetrics.deletionKeystrokes(for: "👋"), 1)
+        XCTAssertEqual(TextMetrics.utf16Length(of: "👋"), 2)
+        XCTAssertEqual(TextMetrics.deletionKeystrokes(for: ""), 0)
+    }
+
     func testInsertionMethodBlockedSecureFieldRoundTrips() throws {
         let dictation = Dictation(
             rawText: "secret",

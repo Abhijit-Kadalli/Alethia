@@ -484,6 +484,33 @@ final class KnowledgeStoreSearchTests: XCTestCase {
     }
 }
 
+final class KnowledgeStoreObservationTests: XCTestCase {
+    func testStartObservingChangesPostsCoalescedNotification() throws {
+        let store = try KnowledgeStore.inMemory()
+        store.startObservingChanges()
+        let exp = expectation(description: "meetings change")
+        let token = NotificationCenter.default.addObserver(
+            forName: KnowledgeStore.didChangeNotification,
+            object: store,
+            queue: .main
+        ) { note in
+            let changes = note.userInfo?[KnowledgeStore.changesKey] as? Set<KnowledgeStore.Change> ?? []
+            if changes.contains(.meetings) {
+                exp.fulfill()
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        try store.saveMeeting(Meeting(title: "Observed"))
+        wait(for: [exp], timeout: 1.5)
+    }
+
+    func testChangeMapsKnownTables() {
+        XCTAssertEqual(KnowledgeStore.Change(table: "meetings"), .meetings)
+        XCTAssertEqual(KnowledgeStore.Change(table: "dictations"), .dictations)
+        XCTAssertNil(KnowledgeStore.Change(table: "sqlite_master"))
+    }
+}
+
 final class KnowledgeStoreStatsTests: XCTestCase {
     func testStatsCounts() throws {
         let store = try KnowledgeStore.inMemory()

@@ -118,7 +118,7 @@ private struct MenuBarBody: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(MenuRowStyle())
-        .disabled(dictation.state == .processing)
+        .disabled(dictation.state == .processing || recorder.phase != .idle)
     }
 
     private var meetingRow: some View {
@@ -141,7 +141,7 @@ private struct MenuBarBody: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(MenuRowStyle(tint: recorder.isRecording ? .red : nil))
-        .disabled(recorder.phase == .starting || recorder.phase == .stopping)
+        .disabled(recorder.phase == .starting || recorder.phase == .stopping || dictation.state != .idle)
     }
 
     private func detectedCallBanner(_ call: MeetingDetector.Detection) -> some View {

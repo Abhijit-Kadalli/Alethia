@@ -9,6 +9,7 @@ public enum DictationPhase: Equatable, Sendable {
     case listening
     case processing
     case inserted(String)
+    case copied(String)
     case error(String)
 }
 
@@ -173,6 +174,10 @@ struct DictationOverlayView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 22))
                 .foregroundStyle(.green)
+        case .copied:
+            Image(systemName: "doc.on.clipboard.fill")
+                .font(.system(size: 20))
+                .foregroundStyle(.orange)
         case .error:
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 20))
@@ -188,6 +193,7 @@ struct DictationOverlayView: View {
             return model.isToggleMode ? "Listening · press \(model.hotkeySymbol) to finish" : "Listening · release \(model.hotkeySymbol) to insert"
         case .processing: return "Transcribing…"
         case .inserted: return "Inserted"
+        case .copied: return "Copied — paste with ⌘V"
         case .error: return "Dictation failed"
         case .hidden: return ""
         }
@@ -196,7 +202,7 @@ struct DictationOverlayView: View {
     private var detail: String {
         switch model.phase {
         case .listening, .processing: return model.partialText
-        case .inserted(let text): return text
+        case .inserted(let text), .copied(let text): return text
         case .error(let message): return message
         case .hidden: return ""
         }

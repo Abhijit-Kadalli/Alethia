@@ -35,6 +35,8 @@ final class AppEnvironment: ObservableObject {
     }
     @Published private(set) var detectedCall: MeetingDetector.Detection?
     @Published private(set) var startupError: String?
+    /// True when the on-disk store could not be opened; this session is not persisted.
+    @Published private(set) var storeIsEphemeral = false
     /// Bumps whenever the knowledge store changes so list views refetch.
     @Published private(set) var storeGeneration = 0
     @Published private(set) var lastStoreChanges: Set<KnowledgeStore.Change> = []
@@ -61,10 +63,11 @@ final class AppEnvironment: ObservableObject {
                 fatalError("SQLite unavailable: \(error)")
             }
             store = memory
-            startupMessage = "Could not open the local database: \(error.localizedDescription)"
+            startupMessage = "Could not open the local database. This session will not be saved. \(error.localizedDescription)"
         }
         store.startObservingChanges()
         self.store = store
+        storeIsEphemeral = startupMessage != nil
 
         let models = ModelManager()
         self.models = models
@@ -77,6 +80,14 @@ final class AppEnvironment: ObservableObject {
         recorder = MeetingRecorder(store: store, speech: speech, processor: processor, settings: settingsStore, paths: paths, calendar: calendar)
         dictation = DictationController(store: store, speech: speech, settings: settingsStore)
         startupError = startupMessage
+        dictation.beginBlockedReason = { [weak recorder] in
+            guard let recorder, recorder.phase != .idle else { return nil }
+            return "Stop the meeting recording before dictating."
+        }
+        recorder.beginBlockedReason = { [weak dictation] in
+            guard let dictation, dictation.state != .idle else { return nil }
+            return "Stop dictation before recording a meeting."
+        }
 
         let provider = Self.makeProvider(loaded.languageModel)
         processor.setNotesProducer(NotesBridge(provider: provider, enabled: loaded.languageModel.autoEnhanceNotes))
@@ -221,7 +232,7 @@ final class AppEnvironment: ObservableObject {
 
     func dismissDetectedCall() {
         detectedCall = nil
-        detector.suppressed = true
+        detector.dismissActiveDetection()
     }
 
     private func requestNotificationPermission() {

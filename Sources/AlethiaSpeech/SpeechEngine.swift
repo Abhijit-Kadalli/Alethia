@@ -19,6 +19,8 @@ public actor SpeechEngine: SpeechEngineProtocol {
     private var batch: AsrManager?
     private var vad: VadManager?
     private var diarizerModels: DiarizerModels?
+    /// Only one incremental session may use `realtime` at a time.
+    private var liveSession: IncrementalTranscriber?
     private let log = Log("Speech")
 
     public init(variant: SpeechModelVariant, languageHint: String? = nil) {
@@ -83,6 +85,8 @@ public actor SpeechEngine: SpeechEngineProtocol {
     }
 
     public func unload() async {
+        liveSession?.cancel()
+        liveSession = nil
         if let realtime { await realtime.cleanup() }
         if let batch { await batch.cleanup() }
         realtime = nil
@@ -166,7 +170,12 @@ public actor SpeechEngine: SpeechEngineProtocol {
 
     public func startLiveTranscription() async throws -> LiveTranscriber {
         guard let realtime else { throw AlethiaError.modelsNotReady("Speech model is not loaded.") }
-        return IncrementalTranscriber(manager: realtime, language: fluidLanguage)
+        if let liveSession, liveSession.isActive {
+            throw AlethiaError.invalidInput("Speech recognition is already in use. Stop dictation or the meeting first.")
+        }
+        let session = IncrementalTranscriber(manager: realtime, language: fluidLanguage)
+        liveSession = session
+        return session
     }
 
     // MARK: VAD
@@ -228,6 +237,8 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
     private var committed: [TranscriptSegment] = []
     private var decodedUpTo = 0
     private var finished = false
+    private var ended = false
+    private var awaitingFinal = false
     private var loop: Task<Void, Never>?
 
     private let sampleRate = 16_000
@@ -247,6 +258,13 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
         }
     }
 
+    /// True until `cancel()` / `finish()` has completed in-flight recognition.
+    var isActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !ended
+    }
+
     func feed(_ samples: [Float]) {
         lock.lock()
         if !finished {
@@ -258,10 +276,13 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
     func finish() async throws -> TranscriptSegment {
         lock.lock()
         finished = true
+        awaitingFinal = true
         let audio = all
         lock.unlock()
         loop?.cancel()
+        if let loop { await loop.value }
         continuation.finish()
+        defer { markEnded() }
         guard !audio.isEmpty else {
             return TranscriptSegment(startMs: 0, endMs: 0, text: "")
         }
@@ -274,9 +295,22 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
         lock.unlock()
         loop?.cancel()
         continuation.finish()
+        // `ended` flips when `runLoop` returns so an overlapping decode still blocks a new session.
+    }
+
+    private func markEnded() {
+        lock.lock()
+        ended = true
+        lock.unlock()
     }
 
     private func runLoop() async {
+        defer {
+            lock.lock()
+            let keepForFinal = awaitingFinal
+            lock.unlock()
+            if !keepForFinal { markEnded() }
+        }
         while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(tickMs))
             if Task.isCancelled { return }
@@ -311,11 +345,10 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
                     }
                     lock.lock()
                     committed.append(shifted)
+                    committedSamples = openStart + boundary
                     lock.unlock()
                 }
-                lock.lock()
-                committedSamples = openStart + boundary
-                lock.unlock()
+                // Failed/empty decode leaves the window uncommitted so finish() can retry it.
                 continue
             }
 

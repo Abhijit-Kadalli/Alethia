@@ -45,6 +45,8 @@ public final class MeetingDetector {
     public var endGraceSeconds: TimeInterval = 20
     /// While true (Alethia itself is recording) detections are ignored.
     public var suppressed = false
+    /// After the user dismisses an offer, ignore further detections until the mic goes idle.
+    private var ignoreUntilIdle = false
 
     private let monitor = MicrophoneActivityMonitor()
     private var pendingConfirm: Task<Void, Never>?
@@ -86,12 +88,24 @@ public final class MeetingDetector {
             pendingConfirm?.cancel()
             pendingEnd?.cancel()
             active = nil
+            ignoreUntilIdle = false
         }
+    }
+
+    /// User declined this detection. Do not offer again until the microphone is released.
+    public func dismissActiveDetection() {
+        pendingConfirm?.cancel()
+        pendingConfirm = nil
+        pendingEnd?.cancel()
+        pendingEnd = nil
+        active = nil
+        ignoreUntilIdle = true
     }
 
     private func microphoneChanged(inUse: Bool) {
         guard running, !suppressed else { return }
         if inUse {
+            if ignoreUntilIdle { return }
             pendingEnd?.cancel()
             guard active == nil, pendingConfirm == nil else { return }
             pendingConfirm = Task { [weak self] in
@@ -106,6 +120,7 @@ public final class MeetingDetector {
                 self.onMeetingDetected?(detection)
             }
         } else {
+            ignoreUntilIdle = false
             pendingConfirm?.cancel()
             pendingConfirm = nil
             guard active != nil else { return }

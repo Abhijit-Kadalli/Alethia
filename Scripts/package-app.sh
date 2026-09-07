@@ -57,7 +57,12 @@ done
 shopt -u nullglob
 
 echo "▸ codesign ($IDENTITY)"
-codesign --force --deep --options runtime --timestamp=none \
+# Ad-hoc (`-`) cannot use Apple's timestamp server; Developer ID notarization requires it.
+TIMESTAMP_FLAG=(--timestamp)
+if [[ "$IDENTITY" == "-" ]]; then
+  TIMESTAMP_FLAG=(--timestamp=none)
+fi
+codesign --force --deep --options runtime "${TIMESTAMP_FLAG[@]}" \
   --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" --identifier "$BUNDLE_ID" "$APP"
 codesign --verify --deep --strict --verbose=1 "$APP"
 
