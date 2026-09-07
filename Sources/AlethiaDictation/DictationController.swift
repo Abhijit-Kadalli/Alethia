@@ -46,6 +46,8 @@ public final class DictationController: ObservableObject {
     private var pendingCorrectionDictationID: UUID?
     /// Bumped by cancel so an in-flight `begin()` (waiting on model load) does not start after the user released.
     private var beginGeneration = 0
+    /// Hold-to-talk released while `begin()` was still setting up; finish as soon as listening starts.
+    private var pendingFinish = false
 
     public init(store: KnowledgeStore, speech: any SpeechEngineProtocol, settings: SettingsStore) {
         self.store = store
@@ -190,9 +192,17 @@ public final class DictationController: ObservableObject {
             }
         }
         log.info("listening → \(target.appName ?? "unknown app")")
+        if pendingFinish {
+            pendingFinish = false
+            await finish()
+        }
     }
 
     private func finish() async {
+        if state == .idle {
+            pendingFinish = true
+            return
+        }
         guard state == .listening, let capture, let live else { return }
         state = .processing
         liveTask?.cancel()
