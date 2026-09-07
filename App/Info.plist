@@ -32,6 +32,10 @@
 	<string>MIT License</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Alethia listens to transcribe meetings and dictation entirely on this Mac. Audio never leaves your device.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Alethia captures system audio from calls so meeting notes include other participants. It never records the screen.</string>
+	<key>NSScreenCaptureDescription</key>
+	<string>Alethia captures system audio from calls so meeting notes include other participants. It never records the screen.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Alethia reads your calendar to name meetings and pre-fill attendees. Nothing is written or uploaded.</string>
 	<key>NSCalendarsUsageDescription</key>

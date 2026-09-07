@@ -65,6 +65,11 @@ jobs:
           security import /tmp/cert.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
           identity="$(security find-identity -v -p codesigning build.keychain | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+          if [[ -z "$identity" ]]; then
+            echo "MACOS_CERTIFICATE_P12 was imported, but no Developer ID Application identity was found." >&2
+            security find-identity -v -p codesigning build.keychain >&2 || true
+            exit 1
+          fi
           echo "ALETHIA_CODESIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
 
       - name: Prepare notarization key (optional)
