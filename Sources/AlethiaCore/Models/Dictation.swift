@@ -7,6 +7,8 @@ public enum InsertionMethod: String, Codable, Sendable {
     case keystrokes
     /// Text was left on the clipboard because no insertion path worked.
     case clipboardOnly
+    /// Aborted because a secure (password) field had focus at insertion time.
+    case blockedSecureField
 }
 
 /// One completed dictation.

@@ -76,15 +76,20 @@ public final class TextInserter {
     /// Inserts `text` at the caret and reports how.
     public func insert(_ text: String, allowAccessibility: Bool = true, allowPaste: Bool = true) async -> InsertionMethod {
         guard !text.isEmpty else { return .accessibility }
+        // Re-check on every path: focus can move to a password field after dictation started.
+        if focusedIsSecureField() { return .blockedSecureField }
         if allowAccessibility, insertViaAccessibility(text) {
             return .accessibility
         }
+        if focusedIsSecureField() { return .blockedSecureField }
         if allowPaste, await insertViaPaste(text) {
             return .paste
         }
+        if focusedIsSecureField() { return .blockedSecureField }
         if typeUnicode(text) {
             return .keystrokes
         }
+        if focusedIsSecureField() { return .blockedSecureField }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         return .clipboardOnly
@@ -92,18 +97,24 @@ public final class TextInserter {
 
     /// Replace the `previous` text that was just inserted with `replacement`.
     public func replaceLastInsertion(previous: String, with replacement: String) async -> InsertionMethod {
+        if focusedIsSecureField() { return .blockedSecureField }
         if replaceViaAccessibility(previous: previous, with: replacement) {
             return .accessibility
         }
+        if focusedIsSecureField() { return .blockedSecureField }
         sendBackspaces(count: previous.count)
         try? await Task.sleep(for: .milliseconds(40))
         return await insert(replacement)
     }
 
+    private func focusedIsSecureField() -> Bool {
+        currentTarget().isSecureField
+    }
+
     // MARK: Accessibility path
 
     private func insertViaAccessibility(_ text: String) -> Bool {
-        guard let element = focusedElement() else { return false }
+        guard let element = focusedElement(), !isSecureElement(element) else { return false }
         var settable = DarwinBoolean(false)
         guard AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable) == .success,
               settable.boolValue else { return false }
@@ -125,7 +136,7 @@ public final class TextInserter {
     }
 
     private func replaceViaAccessibility(previous: String, with replacement: String) -> Bool {
-        guard let element = focusedElement(),
+        guard let element = focusedElement(), !isSecureElement(element),
               let value = stringAttribute(element, kAXValueAttribute),
               let range = selectedRange(element) else { return false }
         let caret = range.location + range.length
@@ -143,6 +154,10 @@ public final class TextInserter {
         }
         let after = stringAttribute(element, kAXValueAttribute)
         return after != nil && after != value
+    }
+
+    private func isSecureElement(_ element: AXUIElement) -> Bool {
+        stringAttribute(element, kAXRoleAttribute) == secureTextFieldRole
     }
 
     private func focusedElement() -> AXUIElement? {

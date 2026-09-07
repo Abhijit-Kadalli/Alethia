@@ -228,7 +228,12 @@ public final class DictationController: ObservableObject {
         }
 
         let method = await inserter.insert(finalText)
-        overlay.flash(.inserted(finalText), for: .seconds(1.4))
+        let blocked = method == .blockedSecureField
+        if blocked {
+            overlay.flash(.error("Dictation is off in password fields."), for: .seconds(2))
+        } else {
+            overlay.flash(.inserted(finalText), for: .seconds(1.4))
+        }
 
         let record = Dictation(
             rawText: raw,
@@ -250,7 +255,7 @@ public final class DictationController: ObservableObject {
         }
         state = .idle
 
-        if dictation.showCorrectionPopover, method != .clipboardOnly {
+        if dictation.showCorrectionPopover, method != .clipboardOnly, !blocked {
             pendingCorrectionDictationID = record.id
             correction.present(text: finalText, seconds: dictation.correctionPopoverSeconds) { [weak self] edited in
                 Task { @MainActor in
@@ -258,7 +263,11 @@ public final class DictationController: ObservableObject {
                 }
             }
         }
-        log.info("inserted \(finalText.count) chars via \(method.rawValue) in \(target.appName ?? "?")")
+        if blocked {
+            log.warning("refused insert into password field")
+        } else {
+            log.info("inserted \(finalText.count) chars via \(method.rawValue) in \(target.appName ?? "?")")
+        }
     }
 
     private func cancel(reason: String?) async {
@@ -282,7 +291,10 @@ public final class DictationController: ObservableObject {
     public func applyCorrection(dictationID: UUID, original: String, edited: String) async {
         let trimmed = edited.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != original.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-        _ = await inserter.replaceLastInsertion(previous: original, with: trimmed)
+        let method = await inserter.replaceLastInsertion(previous: original, with: trimmed)
+        if method == .blockedSecureField {
+            log.warning("refused correction insert into password field")
+        }
         try? store.updateDictationEdit(id: dictationID, editedText: trimmed)
         learn(inserted: original, edited: trimmed)
     }

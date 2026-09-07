@@ -86,4 +86,16 @@ final class CoreModelTests: XCTestCase {
         XCTAssertEqual(paths.relativeRecordingPath(for: id), "Recordings/\(id.uuidString).wav")
         XCTAssertEqual(paths.resolve(relativePath: paths.relativeRecordingPath(for: id)), paths.recordingURL(for: id))
     }
+
+    func testInsertionMethodBlockedSecureFieldRoundTrips() throws {
+        let dictation = Dictation(
+            rawText: "secret",
+            finalText: "secret",
+            insertion: .blockedSecureField
+        )
+        let data = try JSONEncoder().encode(dictation)
+        let decoded = try JSONDecoder().decode(Dictation.self, from: data)
+        XCTAssertEqual(decoded.insertion, .blockedSecureField)
+        XCTAssertEqual(InsertionMethod.blockedSecureField.rawValue, "blockedSecureField")
+    }
 }
