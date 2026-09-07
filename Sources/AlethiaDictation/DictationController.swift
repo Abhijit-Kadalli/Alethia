@@ -290,6 +290,7 @@ public final class DictationController: ObservableObject {
 
     private func cancel(reason: String?) async {
         guard state == .listening else { return }
+        state = .processing
         liveTask?.cancel()
         live?.cancel()
         _ = capture?.stop()

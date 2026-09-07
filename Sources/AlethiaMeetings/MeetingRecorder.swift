@@ -159,12 +159,14 @@ public final class MeetingRecorder: ObservableObject {
         guard case .recording(let meetingID) = phase, let capture else { return nil }
         phase = .stopping
         ticker?.cancel()
-        liveTask?.cancel()
         let live = self.live
         self.live = nil
 
+        // Flush remaining mixer hops into the live session before we cancel it, so the
+        // provisional transcript includes the tail of the recording.
         let result = await capture.stop()
         self.capture = nil
+        liveTask?.cancel()
         live?.cancel()
 
         var meeting = current ?? (try? store.meeting(id: meetingID)) ?? Meeting(id: meetingID, title: Self.defaultTitle(for: Date()))

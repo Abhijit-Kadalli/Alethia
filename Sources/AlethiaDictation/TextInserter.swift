@@ -102,7 +102,9 @@ public final class TextInserter {
         }
         if focusedIsSecureField() { return .blockedSecureField }
         // HID delete removes a user-perceived character (grapheme), not a UTF-16 unit.
-        sendBackspaces(count: TextMetrics.deletionKeystrokes(for: previous))
+        guard sendBackspaces(count: TextMetrics.deletionKeystrokes(for: previous)) else {
+            return .blockedSecureField
+        }
         try? await Task.sleep(for: .milliseconds(40))
         if focusedIsSecureField() { return .blockedSecureField }
         return await insert(replacement)
@@ -230,17 +232,21 @@ public final class TextInserter {
         return true
     }
 
-    private func sendBackspaces(count: Int) {
-        guard count > 0, let source = CGEventSource(stateID: .combinedSessionState) else { return }
+    /// Returns false if focus moved to a password field mid-delete.
+    @discardableResult
+    private func sendBackspaces(count: Int) -> Bool {
+        guard count > 0, let source = CGEventSource(stateID: .combinedSessionState) else { return true }
         for _ in 0..<count {
+            if focusedIsSecureField() { return false }
             guard let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Delete), keyDown: true),
-                  let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Delete), keyDown: false) else { return }
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Delete), keyDown: false) else { return false }
             down.flags = []
             up.flags = []
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)
             usleep(1500)
         }
+        return true
     }
 
     private func typeUnicode(_ text: String) -> Bool {

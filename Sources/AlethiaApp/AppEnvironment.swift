@@ -201,11 +201,11 @@ final class AppEnvironment: ObservableObject {
 
     /// True when live capture or background ASR still owns the speech engine.
     var speechResourcesInUse: Bool {
-        recorder.isRecording || dictation.state != .idle || processor.isBusy
+        recorder.phase != .idle || dictation.state != .idle || processor.isBusy
     }
 
     private func refreshDetectorSuppression() {
-        detector.setRecording(recorder.isRecording || dictation.state == .listening)
+        detector.setRecording(recorder.phase != .idle || dictation.state == .listening)
     }
 
     private func swapSpeechEngine() async {
