@@ -44,6 +44,8 @@ final class AppEnvironment: ObservableObject {
     private let log = Log("App")
     private var changesTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
+    /// Settings asked for a model/language swap while speech was in use; apply when idle.
+    private var pendingSpeechSwap = false
 
     init(paths: AppPaths = .default) {
         self.paths = paths
@@ -93,7 +95,7 @@ final class AppEnvironment: ObservableObject {
         processor.setNotesProducer(NotesBridge(provider: provider, enabled: loaded.languageModel.autoEnhanceNotes))
         dictation.polisher = provider.map { DictationPolisher(provider: $0) }
 
-        changesTask = Task { [weak self] in
+        changesTask = Task { @MainActor [weak self] in
             guard let self else { return }
             for await changes in store.changes {
                 self.lastStoreChanges = changes
@@ -112,12 +114,21 @@ final class AppEnvironment: ObservableObject {
                 guard let self else { return }
                 self.refreshDetectorSuppression()
                 if case .recording = phase { self.detectedCall = nil }
+                self.applyPendingSpeechSwapIfIdle()
             }
             .store(in: &cancellables)
         dictation.$state
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.refreshDetectorSuppression()
+                guard let self else { return }
+                self.refreshDetectorSuppression()
+                self.applyPendingSpeechSwapIfIdle()
+            }
+            .store(in: &cancellables)
+        processor.$progress
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.applyPendingSpeechSwapIfIdle()
             }
             .store(in: &cancellables)
     }
@@ -198,11 +209,20 @@ final class AppEnvironment: ObservableObject {
     }
 
     private func swapSpeechEngine() async {
-        guard !speechResourcesInUse else { return }
+        if speechResourcesInUse {
+            pendingSpeechSwap = true
+            return
+        }
+        pendingSpeechSwap = false
         await speech.configure(variant: settings.speechModel, languageHint: settings.dictation.language)
         if models.recognizerInstalled(for: settings.speechModel) {
             try? await speech.prepare()
         }
+    }
+
+    private func applyPendingSpeechSwapIfIdle() {
+        guard pendingSpeechSwap, !speechResourcesInUse else { return }
+        Task { await swapSpeechEngine() }
     }
 
     /// Unloads in-memory ASR/VAD/diarizer. Refuses while a session or pipeline is using them.

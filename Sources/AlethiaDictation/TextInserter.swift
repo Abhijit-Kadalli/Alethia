@@ -104,6 +104,7 @@ public final class TextInserter {
         // HID delete removes a user-perceived character (grapheme), not a UTF-16 unit.
         sendBackspaces(count: TextMetrics.deletionKeystrokes(for: previous))
         try? await Task.sleep(for: .milliseconds(40))
+        if focusedIsSecureField() { return .blockedSecureField }
         return await insert(replacement)
     }
 
