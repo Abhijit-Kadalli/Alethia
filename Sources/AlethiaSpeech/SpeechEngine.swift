@@ -31,12 +31,22 @@ public actor SpeechEngine: SpeechEngineProtocol {
     public var isReady: Bool { realtime != nil }
 
     /// Switch model/language. Unloads the current recognizer when the model changes.
-    public func configure(variant: SpeechModelVariant, languageHint: String?) async {
+    /// Returns false if a live session is still accepting audio so the caller can retry.
+    @discardableResult
+    public func configure(variant: SpeechModelVariant, languageHint: String?) async -> Bool {
+        if let liveSession, liveSession.isAccepting {
+            return false
+        }
+        if let liveSession {
+            await liveSession.waitUntilEnded()
+            if liveSession.isAccepting { return false }
+        }
         if variant != self.variant {
             await unload()
         }
         self.variant = variant
         self.languageHint = languageHint
+        return true
     }
 
     var asrVersion: AsrModelVersion {

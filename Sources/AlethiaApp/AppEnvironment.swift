@@ -213,10 +213,17 @@ final class AppEnvironment: ObservableObject {
             pendingSpeechSwap = true
             return
         }
+        let applied = await speech.configure(variant: settings.speechModel, languageHint: settings.dictation.language)
+        if !applied || speechResourcesInUse {
+            pendingSpeechSwap = true
+            return
+        }
         pendingSpeechSwap = false
-        await speech.configure(variant: settings.speechModel, languageHint: settings.dictation.language)
         if models.recognizerInstalled(for: settings.speechModel) {
             try? await speech.prepare()
+        }
+        if speechResourcesInUse {
+            pendingSpeechSwap = true
         }
     }
 

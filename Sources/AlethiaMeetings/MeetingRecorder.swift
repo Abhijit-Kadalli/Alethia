@@ -162,10 +162,13 @@ public final class MeetingRecorder: ObservableObject {
         let live = self.live
         self.live = nil
 
-        // Flush remaining mixer hops into the live session before we cancel it, so the
-        // provisional transcript includes the tail of the recording.
+        // Flush remaining mixer hops into the live session, then wait one decode tick
+        // so the provisional transcript includes the tail of the recording.
         let result = await capture.stop()
         self.capture = nil
+        if live != nil {
+            try? await Task.sleep(for: .milliseconds(500))
+        }
         liveTask?.cancel()
         live?.cancel()
 

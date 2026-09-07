@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Build Apps/Alethia/Resources/AppIcon.icns from alethia-logo.svg
+# Build App/AppIcon.icns from App/alethia-logo.svg
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SVG="$ROOT/Apps/Alethia/Resources/alethia-logo.svg"
-OUT="$ROOT/Apps/Alethia/Resources/AppIcon.icns"
+SVG="$ROOT/App/alethia-logo.svg"
+OUT="$ROOT/App/AppIcon.icns"
 WORKDIR="$(mktemp -d)"
 ICONSET="$WORKDIR/AppIcon.iconset"
 MASTER="$WORKDIR/master.png"
