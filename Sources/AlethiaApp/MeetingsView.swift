@@ -92,7 +92,7 @@ struct MeetingsView: View {
                                         Button("Delete…", role: .destructive) {
                                             pendingDeleteID = meeting.id
                                         }
-                                        .disabled(isActivelyRecording(meeting.id))
+                                        .disabled(isBusyMeeting(meeting.id))
                                     }
                             }
                         }
@@ -143,8 +143,12 @@ struct MeetingsView: View {
         return false
     }
 
+    private func isBusyMeeting(_ id: UUID) -> Bool {
+        isActivelyRecording(id) || processor.progress[id] != nil
+    }
+
     private func deleteMeeting(_ id: UUID) {
-        guard !isActivelyRecording(id) else { return }
+        guard !isBusyMeeting(id) else { return }
         try? env.store.deleteMeeting(id: id)
         if nav.selectedMeetingID == id {
             nav.selectedMeetingID = nil
@@ -556,7 +560,7 @@ private struct SavedMeetingDetail: View {
         .toolbar { detailToolbar(meeting) }
         .confirmationDialog("Delete this meeting?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete meeting", role: .destructive) {
-                guard !isActivelyRecording(meeting.id) else { return }
+                guard !isBusyMeeting(meeting.id) else { return }
                 try? env.store.deleteMeeting(id: meeting.id)
                 nav.selectedMeetingID = nil
             }
@@ -724,7 +728,7 @@ private struct SavedMeetingDetail: View {
                 Button("Delete meeting", role: .destructive) {
                     confirmDelete = true
                 }
-                .disabled(isActivelyRecording(meeting.id))
+                .disabled(isBusyMeeting(meeting.id))
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -736,6 +740,10 @@ private struct SavedMeetingDetail: View {
         if case .recording(let meetingID) = recorder.phase { return meetingID == id }
         if recorder.phase != .idle { return recorder.current?.id == id }
         return false
+    }
+
+    private func isBusyMeeting(_ id: UUID) -> Bool {
+        isActivelyRecording(id) || processor.progress[id] != nil
     }
 
     private func exportMarkdown(_ meeting: Meeting) {

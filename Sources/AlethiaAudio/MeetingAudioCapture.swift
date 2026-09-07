@@ -169,11 +169,14 @@ public final class DictationAudioCapture: @unchecked Sendable {
         microphone.onFrames = { [weak self] frames in
             guard let self else { return }
             self.lock.lock()
-            if self.buffer.count < self.maxSamples {
+            let accept = self.buffer.count < self.maxSamples
+            if accept {
                 self.buffer.append(contentsOf: frames)
             }
             self.lock.unlock()
-            self.onFrames?(frames)
+            if accept {
+                self.onFrames?(frames)
+            }
         }
         try microphone.start()
     }

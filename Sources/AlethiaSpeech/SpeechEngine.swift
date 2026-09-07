@@ -309,6 +309,11 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
     func feed(_ samples: [Float]) {
         lock.lock()
         if !finished {
+            // Mirror dictation's 20-minute cap when we keep the full clip for finish().
+            if retainFullAudio, all.count >= sampleRate * 60 * 20 {
+                lock.unlock()
+                return
+            }
             all.append(contentsOf: samples)
         }
         lock.unlock()
