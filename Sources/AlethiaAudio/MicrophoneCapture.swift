@@ -115,6 +115,9 @@ public final class MicrophoneCapture: @unchecked Sendable {
         do {
             try installTapAndStart()
         } catch {
+            lock.lock()
+            running = false
+            lock.unlock()
             log.error("restart failed: \(error.localizedDescription)")
             onError?(error)
         }

@@ -108,8 +108,9 @@ public final class MeetingRecorder: ObservableObject {
         do {
             try paths.ensureDirectories()
             try store.saveMeeting(meeting)
+            current = meeting
             if meetingSettings.liveTranscript {
-                live = try await speech.startLiveTranscription()
+                live = try await speech.startLiveTranscription(retainFullAudio: false)
             }
             capture.onChunk = { [weak self, live] chunk in
                 live?.feed(chunk.samples)

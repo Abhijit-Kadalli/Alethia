@@ -92,6 +92,7 @@ struct MeetingsView: View {
                                         Button("Delete…", role: .destructive) {
                                             pendingDeleteID = meeting.id
                                         }
+                                        .disabled(isActivelyRecording(meeting.id))
                                     }
                             }
                         }
@@ -136,7 +137,14 @@ struct MeetingsView: View {
         }
     }
 
+    private func isActivelyRecording(_ id: UUID) -> Bool {
+        if case .recording(let meetingID) = recorder.phase { return meetingID == id }
+        if recorder.phase != .idle { return recorder.current?.id == id }
+        return false
+    }
+
     private func deleteMeeting(_ id: UUID) {
+        guard !isActivelyRecording(id) else { return }
         try? env.store.deleteMeeting(id: id)
         if nav.selectedMeetingID == id {
             nav.selectedMeetingID = nil
@@ -274,7 +282,7 @@ struct MeetingDetailView: View {
             if recorder.isRecording, showsLive {
                 LiveRecordingView(recorder: recorder)
             } else if nav.selectedMeetingID != nil {
-                SavedMeetingDetail(processor: processor, meetingID: nav.selectedMeetingID)
+                SavedMeetingDetail(recorder: recorder, processor: processor, meetingID: nav.selectedMeetingID)
             } else {
                 ContentUnavailableView(
                     "Select a meeting",
@@ -462,6 +470,7 @@ private struct LiveRecordingView: View {
 private struct SavedMeetingDetail: View {
     @EnvironmentObject private var env: AppEnvironment
     @ObservedObject private var nav = HubNavigation.shared
+    @ObservedObject var recorder: MeetingRecorder
     @ObservedObject var processor: MeetingProcessor
     let meetingID: UUID?
 
@@ -547,6 +556,7 @@ private struct SavedMeetingDetail: View {
         .toolbar { detailToolbar(meeting) }
         .confirmationDialog("Delete this meeting?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete meeting", role: .destructive) {
+                guard !isActivelyRecording(meeting.id) else { return }
                 try? env.store.deleteMeeting(id: meeting.id)
                 nav.selectedMeetingID = nil
             }
@@ -714,11 +724,18 @@ private struct SavedMeetingDetail: View {
                 Button("Delete meeting", role: .destructive) {
                     confirmDelete = true
                 }
+                .disabled(isActivelyRecording(meeting.id))
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
             .help("Meeting actions")
         }
+    }
+
+    private func isActivelyRecording(_ id: UUID) -> Bool {
+        if case .recording(let meetingID) = recorder.phase { return meetingID == id }
+        if recorder.phase != .idle { return recorder.current?.id == id }
+        return false
     }
 
     private func exportMarkdown(_ meeting: Meeting) {

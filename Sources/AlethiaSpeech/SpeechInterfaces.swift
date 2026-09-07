@@ -54,7 +54,8 @@ public protocol SpeechEngineProtocol: AnyObject, Sendable {
     func transcribeFile(_ url: URL, progress: (@Sendable (Double) -> Void)?) async throws -> TranscriptSegment
 
     /// Start a session that produces live partials.
-    func startLiveTranscription() async throws -> LiveTranscriber
+    /// - Parameter retainFullAudio: When false, committed audio is dropped from RAM (meetings).
+    func startLiveTranscription(retainFullAudio: Bool) async throws -> LiveTranscriber
 
     /// Speaker segmentation of 16 kHz mono audio.
     func diarize(_ samples: [Float], progress: (@Sendable (Double) -> Void)?) async throws -> [SpeakerSegment]
@@ -64,6 +65,12 @@ public protocol SpeechEngineProtocol: AnyObject, Sendable {
 
     /// Release model memory.
     func unload() async
+}
+
+extension SpeechEngineProtocol {
+    public func startLiveTranscription() async throws -> LiveTranscriber {
+        try await startLiveTranscription(retainFullAudio: true)
+    }
 }
 
 /// Energy-based speech detection used when the VAD model is unavailable and for cheap

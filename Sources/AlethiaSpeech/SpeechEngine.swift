@@ -179,7 +179,7 @@ public actor SpeechEngine: SpeechEngineProtocol {
 
     // MARK: Live
 
-    public func startLiveTranscription() async throws -> LiveTranscriber {
+    public func startLiveTranscription(retainFullAudio: Bool = true) async throws -> LiveTranscriber {
         guard let realtime else { throw AlethiaError.modelsNotReady("Speech model is not loaded.") }
         if let liveSession {
             // Still feeding audio: a second caller (dictation + meeting) is a real conflict.
@@ -189,7 +189,7 @@ public actor SpeechEngine: SpeechEngineProtocol {
             // Cancel/finish already started — wait out the in-flight decode, then reuse.
             await liveSession.waitUntilEnded()
         }
-        let session = IncrementalTranscriber(manager: realtime, language: fluidLanguage)
+        let session = IncrementalTranscriber(manager: realtime, language: fluidLanguage, retainFullAudio: retainFullAudio)
         liveSession = session
         return session
     }
@@ -252,6 +252,9 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
     private var committedSamples = 0
     private var committed: [TranscriptSegment] = []
     private var decodedUpTo = 0
+    /// Samples discarded from the front of `all` after a commit (when not retaining full audio).
+    private var originSamples = 0
+    private let retainFullAudio: Bool
     private var finished = false
     private var ended = false
     private var awaitingFinal = false
@@ -264,9 +267,10 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
     private let commitAfterSamples = 16_000 * 8
     private let hardCommitSamples = 16_000 * 20
 
-    init(manager: AsrManager, language: Language?) {
+    init(manager: AsrManager, language: Language?, retainFullAudio: Bool = true) {
         self.manager = manager
         self.language = language
+        self.retainFullAudio = retainFullAudio
         var cont: AsyncStream<LiveTranscriptUpdate>.Continuation!
         updates = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { cont = $0 }
         continuation = cont
@@ -382,7 +386,7 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
                 let piece = Array(open[..<boundary])
                 if let segment = try? await SpeechEngine.transcribeSamples(piece, with: manager, language: language),
                    !segment.text.isEmpty {
-                    let offsetMs = openStart * 1000 / sampleRate
+                    let offsetMs = (originSamples + openStart) * 1000 / sampleRate
                     var shifted = segment
                     shifted.startMs += offsetMs
                     shifted.endMs += offsetMs
@@ -392,6 +396,12 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
                     lock.lock()
                     committed.append(shifted)
                     committedSamples = openStart + boundary
+                    if !retainFullAudio, committedSamples > 0, committedSamples <= all.count {
+                        all.removeFirst(committedSamples)
+                        originSamples += committedSamples
+                        decodedUpTo = max(0, decodedUpTo - committedSamples)
+                        committedSamples = 0
+                    }
                     lock.unlock()
                 }
                 // Failed/empty decode leaves the window uncommitted so finish() can retry it.
@@ -406,7 +416,7 @@ final class IncrementalTranscriber: LiveTranscriber, @unchecked Sendable {
             let snapshot = LiveTranscriptUpdate(
                 committed: committed,
                 volatile: segment?.text ?? "",
-                volatileStartMs: openStart * 1000 / sampleRate
+                volatileStartMs: (originSamples + openStart) * 1000 / sampleRate
             )
             let stillRunning = !finished
             lock.unlock()
