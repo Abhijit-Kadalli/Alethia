@@ -44,6 +44,8 @@ public final class DictationController: ObservableObject {
     private var target: InsertionTarget?
     private var startedAt: Date?
     private var pendingCorrectionDictationID: UUID?
+    /// Bumped by cancel so an in-flight `begin()` (waiting on model load) does not start after the user released.
+    private var beginGeneration = 0
 
     public init(store: KnowledgeStore, speech: any SpeechEngineProtocol, settings: SettingsStore) {
         self.store = store
@@ -126,6 +128,8 @@ public final class DictationController: ObservableObject {
             showError(reason)
             return
         }
+        beginGeneration += 1
+        let generation = beginGeneration
         let dictation = settings.load().dictation
         lastError = nil
         correction.dismiss()
@@ -141,9 +145,11 @@ public final class DictationController: ObservableObject {
             try await speech.prepare()
             try await PermissionGate().requireMicrophone()
         } catch {
+            guard generation == beginGeneration else { return }
             showError(error.localizedDescription)
             return
         }
+        guard generation == beginGeneration else { return }
 
         let capture = DictationAudioCapture()
         var live: LiveTranscriber?
@@ -152,7 +158,13 @@ public final class DictationController: ObservableObject {
             try capture.start()
         } catch {
             live?.cancel()
+            guard generation == beginGeneration else { return }
             showError((error as? AlethiaError)?.errorDescription ?? error.localizedDescription)
+            return
+        }
+        guard generation == beginGeneration else {
+            live?.cancel()
+            _ = capture.stop()
             return
         }
         guard let live else { return }
@@ -289,6 +301,7 @@ public final class DictationController: ObservableObject {
     }
 
     private func cancel(reason: String?) async {
+        beginGeneration += 1
         guard state == .listening else { return }
         state = .processing
         liveTask?.cancel()

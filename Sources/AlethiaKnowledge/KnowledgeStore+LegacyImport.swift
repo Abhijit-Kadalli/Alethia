@@ -58,9 +58,9 @@ extension KnowledgeStore {
                     status: .ready,
                     audioPath: SQLite.text(stmt, 7)
                 )
-                meeting.userNotes = SQLite.text(stmt, 5) ?? ""
                 meeting.enhancedNotes = SQLite.text(stmt, 5)
                 meeting.enhancedAt = SQLite.date(stmt, 6)
+                meeting.enhancedBy = SQLite.text(stmt, 5) == nil ? nil : "imported"
                 if let ended {
                     meeting.durationMs = max(0, Int(ended.timeIntervalSince(started) * 1000))
                 }
@@ -131,10 +131,19 @@ extension KnowledgeStore {
     }
 
     private static func decodeLegacyWords(_ json: String?) -> [TimedWord] {
-        guard let json, let data = json.data(using: .utf8),
-              let words = try? JSONDecoder().decode([TimedWord].self, from: data) else {
-            return []
+        guard let json, let data = json.data(using: .utf8) else { return [] }
+        if let words = try? JSONDecoder().decode([TimedWord].self, from: data) {
+            return words
         }
-        return words
+        struct LegacyWord: Decodable {
+            var word: String?
+            var text: String?
+            var startMs: Int
+            var endMs: Int
+        }
+        guard let legacy = try? JSONDecoder().decode([LegacyWord].self, from: data) else { return [] }
+        return legacy.map {
+            TimedWord(text: $0.text ?? $0.word ?? "", startMs: $0.startMs, endMs: $0.endMs)
+        }
     }
 }
